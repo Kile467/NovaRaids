@@ -94,12 +94,14 @@ public class LocationsConfig {
             Vec3d pos = new Vec3d(x, y, z);
 
             if (ConfigHelper.checkProperty(location_object, "world", location)) {
-                String world_path = location_object.get("world").getAsString();
+                String world_path = location_object.get("world").getAsString().toLowerCase();
                 boolean found = false;
                 for (ServerWorld w : nr.server().getWorlds()) {
-                    String id = w.getRegistryKey().getValue().toString();
-                    String path = w.getRegistryKey().getValue().getPath();
-                    if (id.equals(world_path) || path.equals(world_path)) {
+                    String id        = w.getRegistryKey().getValue().toString().toLowerCase();
+                    String path      = w.getRegistryKey().getValue().getPath().toLowerCase();
+                    String bukkitName = w.getWorld().getName().toLowerCase();
+                    
+                    if (id.equals(world_path) || path.equals(world_path) || bukkitName.equals(world_path)) {
                         world = w;
                         found = true;
                         break;
@@ -107,6 +109,7 @@ public class LocationsConfig {
                 }
                 if (!found) {
                     nr.logError("[RAIDS] World " + world_path + " not found. Using overworld.");
+                    world = nr.server().getOverworld();
                 }
             }
 
