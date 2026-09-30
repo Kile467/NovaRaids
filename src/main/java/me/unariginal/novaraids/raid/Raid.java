@@ -640,7 +640,7 @@ public class Raid {
     public void fixBossPosition() {
         if (phase != RaidPhase.STOPPING && phase != RaidPhase.INIT) {
             PokemonEntity bossEntity = getBossEntity();
-            if (bossEntity != null && bossEntity.getPos().distanceTo(location.bossLocation.getPos()) > 0) {
+            if (bossEntity != null && (bossEntity.getPos().distanceTo(location.bossLocation.getPos()) > 0 || bossEntity.getYaw() != location.bossLocation.yaw)) {
                 bossEntity.teleport(location.getServerWorld(), location.bossLocation.xPos, location.bossLocation.yPos, location.bossLocation.zPos, null, location.bossLocation.yaw, 0);
             }
         }
