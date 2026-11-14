@@ -1,0 +1,848 @@
+package me.unariginal.novaraids.handlers;
+
+import com.cobblemon.mod.common.Cobblemon;
+import com.cobblemon.mod.common.CobblemonItems;
+import com.cobblemon.mod.common.api.Priority;
+import com.cobblemon.mod.common.api.battles.model.PokemonBattle;
+import com.cobblemon.mod.common.api.battles.model.actor.BattleActor;
+import com.cobblemon.mod.common.api.events.CobblemonEvents;
+import com.cobblemon.mod.common.api.events.battles.BattleFledEvent;
+import com.cobblemon.mod.common.api.events.battles.BattleStartedEvent;
+import com.cobblemon.mod.common.api.events.drops.LootDroppedEvent;
+import com.cobblemon.mod.common.api.events.entity.PokemonEntitySaveToWorldEvent;
+import com.cobblemon.mod.common.api.events.entity.SpawnEvent;
+import com.cobblemon.mod.common.api.events.pokeball.ThrownPokeballHitEvent;
+import com.cobblemon.mod.common.api.events.pokemon.ExperienceGainedEvent;
+import com.cobblemon.mod.common.api.events.pokemon.PokemonCapturedEvent;
+import com.cobblemon.mod.common.api.events.pokemon.PokemonSentEvent;
+import com.cobblemon.mod.common.battles.actor.PlayerBattleActor;
+import com.cobblemon.mod.common.battles.actor.PokemonBattleActor;
+import com.cobblemon.mod.common.entity.pokemon.PokemonEntity;
+import com.cobblemon.mod.common.item.PokeBallItem;
+import com.cobblemon.mod.common.item.PokemonItem;
+import com.cobblemon.mod.common.platform.events.PlatformEvents;
+import com.cobblemon.mod.common.platform.events.ServerPlayerEvent;
+import com.cobblemon.mod.common.pokemon.Pokemon;
+import eu.pb4.sgui.api.elements.GuiElement;
+import eu.pb4.sgui.api.elements.GuiElementBuilder;
+import eu.pb4.sgui.api.gui.SimpleGui;
+import kotlin.Unit;
+import me.lucko.fabric.api.permissions.v0.Permissions;
+import me.unariginal.novaraids.NovaRaids;
+import me.unariginal.novaraids.cache.PlayerRaidCache;
+import me.unariginal.novaraids.data.categories.bosses.Boss;
+import me.unariginal.novaraids.data.categories.Category;
+import me.unariginal.novaraids.data.players.CatchDetails;
+import me.unariginal.novaraids.data.players.PlayerRaidData;
+import me.unariginal.novaraids.handlers.custom.*;
+import me.unariginal.novaraids.raid.Raid;
+import me.unariginal.novaraids.raid.RaidPhase;
+import me.unariginal.novaraids.utils.ContrabandUtils;
+import me.unariginal.novaraids.placeholders.ParseContext;
+import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
+import net.fabricmc.fabric.api.event.player.UseItemCallback;
+import net.minecraft.component.DataComponentTypes;
+import net.minecraft.component.type.NbtComponent;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.LivingEntity;
+import net.minecraft.entity.attribute.EntityAttributeInstance;
+import net.minecraft.entity.attribute.EntityAttributes;
+import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
+import net.minecraft.nbt.NbtCompound;
+import net.minecraft.registry.Registries;
+import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.text.Text;
+import net.minecraft.util.ActionResult;
+import net.minecraft.util.Hand;
+import net.minecraft.util.Identifier;
+import net.minecraft.util.TypedActionResult;
+import net.minecraft.util.hit.EntityHitResult;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Box;
+import net.minecraft.world.World;
+
+import java.util.*;
+
+import static me.unariginal.novaraids.NovaRaids.logInfo;
+import static me.unariginal.novaraids.config.ConfigManager.*;
+import static me.unariginal.novaraids.data.guis.BaseGUI.getPageTotal;
+import static me.unariginal.novaraids.raid.RaidManager.activeRaids;
+import static me.unariginal.novaraids.raid.RaidManager.queueRaid;
+import static me.unariginal.novaraids.utils.TextUtils.deserialize;
+
+@SuppressWarnings("UnusedReturnValue")
+public class CobblemonEventHandler {
+    private static Unit unit() {
+        return Unit.INSTANCE;
+    }
+
+    private static final NovaRaids nr = NovaRaids.INSTANCE;
+
+    public static void register() {
+        CobblemonEvents.BATTLE_STARTED_PRE.subscribe(Priority.HIGHEST, event -> {
+            return onBattleStartedPre(event);
+        });
+
+        CobblemonEvents.BATTLE_FLED.subscribe(CobblemonEventHandler::onBattleFled);
+        CobblemonEvents.LOOT_DROPPED.subscribe(CobblemonEventHandler::onLootDropped);
+        CobblemonEvents.THROWN_POKEBALL_HIT.subscribe(CobblemonEventHandler::onThrownPokeballHit);
+        CobblemonEvents.POKEMON_CAPTURED.subscribe(CobblemonEventHandler::onPokemonCaptured);
+        CobblemonEvents.EXPERIENCE_GAINED_EVENT_PRE.subscribe(CobblemonEventHandler::onExperienceGainedPre);
+        CobblemonEvents.POKEMON_ENTITY_SAVE_TO_WORLD.subscribe(CobblemonEventHandler::onSavePokemonEntity);
+        CobblemonEvents.POKEMON_SENT_POST.subscribe(CobblemonEventHandler::onSendOutPokemon);
+        CobblemonEvents.POKEMON_ENTITY_SPAWN.subscribe(CobblemonEventHandler::onPokemonEntitySpawn);
+        PlatformEvents.SERVER_PLAYER_LOGOUT.subscribe(CobblemonEventHandler::onPlayerLogout);
+
+        UseItemCallback.EVENT.register(CobblemonEventHandler::onRightClick);
+        AttackEntityCallback.EVENT.register(CobblemonEventHandler::onAttackEntity);
+
+        RaidStartEventHandler.register();
+        RaidEndEventHandler.register();
+        RaidLostEventHandler.register();
+        BossDamagedEventHandler.register();
+        BossDefeatedEventHandler.register();
+        SetupPhaseEventHandler.register();
+        FightPhaseEventHandler.register();
+        CatchWarningPhaseEventHandler.register();
+        CatchPhaseEventHandler.register();
+    }
+
+    private static Unit onThrownPokeballHit(ThrownPokeballHitEvent event) {
+        PokemonEntity pokemonEntity = event.getPokemon();
+        Pokemon pokemon = pokemonEntity.getPokemon();
+        if (pokemon.getPersistentData().contains("raid_data") && pokemon.getPersistentData().getCompound("raid_data").contains("raid_entity")) {
+            for (Raid raid : activeRaids.values()) {
+                for (PokemonEntity clone : raid.clones.keySet()) {
+                    if (clone.getUuid().equals(pokemonEntity.getUuid())) {
+                        raid.addPokeballsCapturing(event.getPokeBall());
+                        return unit();
+                    }
+                }
+            }
+            pokemonEntity.remove(Entity.RemovalReason.DISCARDED);
+            event.cancel();
+        }
+        return unit();
+    }
+
+    private static Unit onPokemonCaptured(PokemonCapturedEvent event) {
+        ServerPlayerEntity player = event.getPlayer();
+        Pokemon pokemon = event.getPokemon();
+        // If a player is in a raid they could only be catching a catch phase pokemon. No further checks are needed.
+        Raid raid = PlayerRaidCache.currentRaid(player);
+        if (raid != null) {
+            PlayerRaidData playerRaidData = raid.playerRaidData.get(player.getUuidAsString());
+            if (playerRaidData != null) {
+                playerRaidData.catchResult = new CatchDetails(
+                        true,
+                        pokemon.getSpecies().getName(),
+                        pokemon.getForm().formOnlyShowdownId(),
+                        pokemon.getIvs(),
+                        pokemon.getEvs(),
+                        pokemon.getShiny()
+                );
+            }
+            raid.removePlayer(player);
+        }
+        return unit();
+    }
+
+    private static Unit onBattleStartedPre(BattleStartedEvent.Pre event) {
+        PokemonBattle battle = event.getBattle();
+        ServerPlayerEntity player = null;
+        PokemonEntity pokemonEntity = null;
+
+        for (BattleActor actor : battle.getActors()) {
+            if (actor instanceof PlayerBattleActor playerBattleActor) {
+                player = playerBattleActor.getEntity();
+            } else if (actor instanceof PokemonBattleActor pokemonBattleActor) {
+                pokemonEntity = pokemonBattleActor.getEntity();
+            }
+        }
+
+        if (player != null && pokemonEntity != null) {
+            UUID pokemonUuid = pokemonEntity.getPokemon().getUuid();
+
+            // Prevent players from fighting raid pokemon they shouldn't be fighting
+            for (Raid raid : activeRaids.values()) {
+                ParseContext parseContext = ParseContext.builder().raid(raid).player(player).build();
+
+                // No fighting a boss pokemon
+                if (raid.bossPokemonUncatchable.getUuid().equals(pokemonUuid)) {
+                    if (raid.phase == RaidPhase.FIGHT) {
+                        Raid playerRaid = PlayerRaidCache.currentRaid(player);
+                        if (playerRaid == null || !raid.uuid.equals(playerRaid.uuid)) {
+                            event.cancel();
+                            return unit();
+                        }
+                    } else {
+                        event.cancel();
+                        return unit();
+                    }
+                } else {
+                    // No fighting someone else's clone
+                    for (PokemonEntity clone : raid.clones.keySet()) {
+                        if (clone.getPokemon().getUuid().equals(pokemonUuid)) {
+                            logInfo("Clone is in the set");
+                            if (!raid.clones.get(clone).equals(player.getUuid())) {
+                                logInfo("Clone is not player's clone");
+                                player.sendMessage(deserialize(MESSAGES.feedback.warnings.notYourEncounter, parseContext));
+                                event.cancel();
+                            }
+                            return unit();
+                        }
+                    }
+                }
+            }
+
+            Raid raid = PlayerRaidCache.currentRaid(player);
+            if (raid == null) {
+                // You are not participating in a raid
+                return unit();
+            }
+
+            ParseContext parseContext = ParseContext.builder().raid(raid).player(player).build();
+
+            if (!raid.bossPokemonUncatchable.getUuid().equals(pokemonUuid)) {
+                logInfo("UUID doesn't match. Probably a wild encounter");
+                player.sendMessage(deserialize(MESSAGES.feedback.warnings.battleDuringRaid, ParseContext.builder().player(player).raid(raid).build()));
+                event.cancel();
+                return unit();
+            }
+
+            // Level checking
+            logInfo("Checking level requirements");
+            for (Pokemon pokemon : Cobblemon.INSTANCE.getStorage().getParty(player)) {
+                if (pokemon != null) {
+                    if (pokemon.getLevel() < raid.boss.raidDetails.minimumLevel) {
+                        player.sendMessage(deserialize(MESSAGES.feedback.warnings.minimumLevel, parseContext));
+                        event.cancel();
+                        return unit();
+                    }
+                    if (pokemon.getLevel() > raid.boss.raidDetails.maximumLevel) {
+                        player.sendMessage(deserialize(MESSAGES.feedback.warnings.maximumLevel, parseContext));
+                        event.cancel();
+                        return unit();
+                    }
+                }
+            }
+
+            // Contraband check during fight phase
+            if (raid.phase == RaidPhase.FIGHT) {
+                event.cancel();
+                if (!ContrabandUtils.hasContraband(player, raid)) {
+                    BattleHandler.invokeBattle(raid, player);
+                }
+            }
+        }
+
+        return unit();
+    }
+
+    private static Unit onBattleFled(BattleFledEvent event) {
+        PokemonBattle battle = event.getBattle();
+        for (BattleActor actor : battle.getActors()) {
+            if (!(actor instanceof PlayerBattleActor playerBattleActor) || playerBattleActor.getEntity() == null) {
+                return unit();
+            }
+
+            ServerPlayerEntity player = playerBattleActor.getEntity();
+            Raid raid = PlayerRaidCache.currentRaid(player);
+
+            if (raid == null) return unit();
+
+            raid.addFleeingPlayer(player.getUuid());
+            List<PokemonEntity> toRemove = new ArrayList<>();
+            for (PokemonEntity cloneEntity : raid.clones.keySet()) {
+                if (raid.clones.get(cloneEntity).equals(player.getUuid())) {
+                    toRemove.add(cloneEntity);
+                }
+            }
+            for (PokemonEntity cloneEntity : toRemove) {
+                raid.removeClone(cloneEntity, true);
+            }
+        }
+
+        return unit();
+    }
+
+    private static Unit onLootDropped(LootDroppedEvent event) {
+        LivingEntity entity = event.getEntity();
+        if (entity instanceof PokemonEntity pokemonEntity) {
+            Pokemon pokemon = pokemonEntity.getPokemon();
+            if (pokemon.getPersistentData().contains("raid_data") && pokemon.getPersistentData().getCompound("raid_data").contains("raid_entity")) event.cancel();
+        }
+        return unit();
+    }
+
+    private static Unit onExperienceGainedPre(ExperienceGainedEvent.Pre event) {
+        Pokemon pokemon = event.getPokemon();
+        if (!pokemon.isPlayerOwned()) return unit();
+
+        ServerPlayerEntity player = pokemon.getOwnerPlayer();
+        if (player == null) return unit();
+
+        Raid raid = PlayerRaidCache.currentRaid(player);
+        if (raid == null) return unit();
+
+        if ((!CONFIG.raidSettings.allowExperienceGain || raid.isPlayerFleeing(player.getUuid())) && event.getSource().isBattle()) {
+            event.cancel();
+        }
+
+        return unit();
+    }
+
+    private static Unit onPlayerLogout(ServerPlayerEvent.Logout event) {
+        nr.server.execute(() -> {
+            ServerPlayerEntity player = event.getPlayer();
+            Raid raid = PlayerRaidCache.currentRaid(player);
+            if (raid == null) return;
+
+            raid.removePlayer(player);
+            if (raid.phase != RaidPhase.INIT && raid.phase != RaidPhase.SETUP && raid.phase != RaidPhase.STOPPING && raid.participatingPlayers.isEmpty()) {
+                raid.stop();
+            }
+        });
+
+        return unit();
+    }
+
+    private static Unit onSavePokemonEntity(PokemonEntitySaveToWorldEvent event) {
+        PokemonEntity pokemonEntity = event.getPokemonEntity();
+        Pokemon pokemon = pokemonEntity.getPokemon();
+        if (pokemon.getPersistentData().contains("raid_data")) {
+            event.cancel();
+        }
+        return unit();
+    }
+
+    private static Unit onSendOutPokemon(PokemonSentEvent.Post event) {
+        if (!CONFIG.raidSettings.reduceLargePokemonSize) return unit();
+
+        Pokemon pokemon = event.getPokemon();
+        if (!pokemon.isPlayerOwned()) return unit();
+
+        PokemonEntity pokemonEntity = event.getPokemonEntity();
+
+        ServerPlayerEntity player = pokemon.getOwnerPlayer();
+        if (player == null) return unit();
+
+        Raid raid = PlayerRaidCache.currentRaid(player);
+        if (raid == null) return unit();
+
+        Box hitbox = pokemonEntity.getBoundingBox();
+        double maxLength = Math.max(Math.max(hitbox.getLengthX(), hitbox.getLengthY()), hitbox.getLengthZ());
+        if (maxLength > 1) {
+            double scale = 1 / maxLength;
+            EntityAttributeInstance scaleAttribute = pokemonEntity.getAttributeInstance(EntityAttributes.GENERIC_SCALE);
+            if (scaleAttribute != null) scaleAttribute.setBaseValue(scale);
+        }
+        return unit();
+    }
+
+    private static Unit onPokemonEntitySpawn(SpawnEvent<PokemonEntity> event) {
+        if (CONFIG.raidSettings.disableSpawnsInArena) {
+            BlockPos pos = event.getSpawnablePosition().getPosition();
+            for (Raid raid : activeRaids.values()) {
+                if (raid.location.isPointInLocation(pos.getX(), pos.getZ())) {
+                    event.cancel();
+                    break;
+                }
+            }
+        }
+        return unit();
+    }
+
+    private static ActionResult onAttackEntity(PlayerEntity playerEntity, World world, Hand hand, Entity entity, EntityHitResult entityHitResult) {
+        if (entity instanceof PokemonEntity pokemonEntity) {
+            Pokemon pokemon = pokemonEntity.getPokemon();
+            if (pokemon.getPersistentData().contains("raid_entity")) {
+                return ActionResult.FAIL;
+            }
+        }
+        return ActionResult.PASS;
+    }
+
+    // TODO: Move to `guis` folder for handling the GUI portion
+    private static TypedActionResult<ItemStack> onRightClick(PlayerEntity playerEntity, World world, Hand hand) {
+        ServerPlayerEntity player = nr.server.getPlayerManager().getPlayer(playerEntity.getUuid());
+        if (player != null) {
+            ParseContext.Builder parseContextBuilder = ParseContext.builder().player(player);
+            ItemStack itemStack = player.getStackInHand(hand);
+            NbtComponent customData = itemStack.getComponents().get(DataComponentTypes.CUSTOM_DATA);
+
+            NbtCompound passNBT = new NbtCompound();
+            passNBT.putString("raid_item", "raid_pass");
+            NbtCompound voucherNBT = new NbtCompound();
+            voucherNBT.putString("raid_item", "raid_voucher");
+
+            if (customData != null) {
+                if (hand.name().contains("MAIN_HAND") && customData.contains("raid_item")) {
+                    if (customData.copyNbt().getString("raid_item").equals("raid_pass")) {
+                        String bossId = customData.copyNbt().getString("raid_boss");
+                        String categoryId = customData.copyNbt().getString("raid_category");
+                        if (bossId.equalsIgnoreCase("*")) {
+                            if (PlayerRaidCache.isInRaid(player)) {
+                                player.sendMessage(deserialize(MESSAGES.feedback.warnings.alreadyInRaid, parseContextBuilder.build()));
+                                return TypedActionResult.fail(itemStack);
+                            }
+
+                            List<Raid> joinableRaids = new ArrayList<>();
+                            Category category = null;
+                            if (categoryId.equalsIgnoreCase("*")) {
+                                joinableRaids.addAll(activeRaids.values().stream().filter(raid -> raid.phase == RaidPhase.SETUP).toList());
+                            } else {
+                                category = Category.getCategory(categoryId);
+                                if (category == null) {
+                                    player.sendMessage(deserialize(MESSAGES.feedback.warnings.categoryDoesntExist, parseContextBuilder.build()));
+                                    return TypedActionResult.fail(itemStack);
+                                }
+
+                                for (Raid raid : activeRaids.values()) {
+                                    if (raid.category.categoryId.equalsIgnoreCase(categoryId)) {
+                                        joinableRaids.add(raid);
+                                    }
+                                }
+                            }
+
+                            if (joinableRaids.isEmpty()) {
+                                player.sendMessage(deserialize(MESSAGES.feedback.noActiveRaids, parseContextBuilder.category(category).build()));
+                                return TypedActionResult.fail(itemStack);
+                            }
+
+                            Map<Integer, SimpleGui> pages = new HashMap<>();
+                            int pageTotal = getPageTotal(joinableRaids.size(), RAID_PASS_GUI.getTotalSlotsBySymbol(RAID_PASS_GUI.raidDisplayItem.symbol));
+                            for (int i = 1; i <= pageTotal; i++) {
+                                SimpleGui gui = new SimpleGui(RAID_PASS_GUI.getScreenHandler(), player, false);
+                                gui.setTitle(deserialize(RAID_PASS_GUI.guiTitle, parseContextBuilder.build()));
+                                pages.put(i, gui);
+                            }
+
+                            int index = 0;
+                            for (Map.Entry<Integer, SimpleGui> pageEntry : pages.entrySet()) {
+                                for (Integer slot : RAID_PASS_GUI.getSlotsBySymbol(RAID_PASS_GUI.raidDisplayItem.symbol)) {
+                                    if (index < joinableRaids.size()) {
+                                        Raid raid = joinableRaids.get(index);
+                                        ParseContext parseContext = parseContextBuilder.raid(raid).build();
+
+                                        List<Text> lore = new ArrayList<>();
+                                        for (String line : RAID_PASS_GUI.raidDisplayItem.itemLore) {
+                                            lore.add(deserialize(line, parseContext));
+                                        }
+
+                                        ItemStack item = PokemonItem.from(raid.bossPokemon);
+                                        GuiElement element = new GuiElementBuilder(item)
+                                                .setName(deserialize(RAID_PASS_GUI.raidDisplayItem.itemName, parseContext))
+                                                .setLore(lore)
+                                                .setCallback((num, clickType, slotActionType) -> {
+                                                    if (!clickType.isLeft) return;
+
+                                                    if (!raid.requiresPass) {
+                                                        player.sendMessage(deserialize(MESSAGES.feedback.warnings.noPassNeeded, parseContext));
+                                                        return;
+                                                    }
+
+                                                    if (raid.phase != RaidPhase.SETUP) {
+                                                        player.sendMessage(deserialize(MESSAGES.feedback.warnings.notJoinable, parseContext));
+                                                        return;
+                                                    }
+
+                                                    boolean hasSpace = raid.participatingPlayers.size() < raid.maxPlayers ||
+                                                            raid.maxPlayers == -1 ||
+                                                            Permissions.check(player, "novaraids.override");
+
+                                                    if (!hasSpace) {
+                                                        player.sendMessage(deserialize(MESSAGES.feedback.warnings.maxPlayers, parseContext));
+                                                        return;
+                                                    }
+
+                                                    if (raid.addPlayer(player.getUuid(), true)) {
+                                                        itemStack.decrement(1);
+                                                        player.sendMessage(deserialize(MESSAGES.feedback.joinedRaid, parseContext));
+                                                        pageEntry.getValue().close();
+                                                    }
+
+                                                }).build();
+                                        pageEntry.getValue().setSlot(slot, element);
+                                        index++;
+                                    } else {
+                                        ParseContext parseContext = parseContextBuilder.build();
+                                        ItemStack item = RAID_PASS_GUI.backgroundItem.item.copy();
+                                        List<Text> lore = new ArrayList<>();
+                                        for (String line : RAID_PASS_GUI.backgroundItem.itemLore) {
+                                            lore.add(deserialize(line, parseContext));
+                                        }
+                                        GuiElement element = new GuiElementBuilder(item)
+                                                .setName(deserialize(RAID_PASS_GUI.backgroundItem.itemName, parseContext))
+                                                .setLore(lore)
+                                                .build();
+                                        pageEntry.getValue().setSlot(slot, element);
+                                    }
+                                }
+                                ParseContext parseContext = parseContextBuilder.build();
+
+                                if (pageEntry.getKey() < pageTotal) {
+                                    for (Integer slot : RAID_PASS_GUI.getSlotsBySymbol(RAID_PASS_GUI.nextItem.symbol)) {
+                                        ItemStack item = RAID_PASS_GUI.nextItem.item.copy();
+                                        List<Text> lore = new ArrayList<>();
+                                        for (String line : RAID_PASS_GUI.nextItem.itemLore) {
+                                            lore.add(deserialize(line, parseContext));
+                                        }
+                                        GuiElement element = new GuiElementBuilder(item)
+                                                .setName(deserialize(RAID_PASS_GUI.nextItem.itemName, parseContext))
+                                                .setLore(lore)
+                                                .setCallback(clickType -> {
+                                                    pageEntry.getValue().close();
+                                                    pages.get(pageEntry.getKey() + 1).open();
+                                                })
+                                                .build();
+                                        pageEntry.getValue().setSlot(slot, element);
+                                    }
+                                }
+
+                                if (pageEntry.getKey() > 1) {
+                                    for (Integer slot : RAID_PASS_GUI.getSlotsBySymbol(RAID_PASS_GUI.previousItem.symbol)) {
+                                        ItemStack item = RAID_PASS_GUI.previousItem.item.copy();
+                                        List<Text> lore = new ArrayList<>();
+                                        for (String line : RAID_PASS_GUI.previousItem.itemLore) {
+                                            lore.add(deserialize(line, parseContext));
+                                        }
+                                        GuiElement element = new GuiElementBuilder(item)
+                                                .setName(deserialize(RAID_PASS_GUI.previousItem.itemName, parseContext))
+                                                .setLore(lore)
+                                                .setCallback(clickType -> {
+                                                    pageEntry.getValue().close();
+                                                    pages.get(pageEntry.getKey() - 1).open();
+                                                })
+                                                .build();
+                                        pageEntry.getValue().setSlot(slot, element);
+                                    }
+                                }
+
+                                for (Integer slot : RAID_PASS_GUI.getSlotsBySymbol(RAID_PASS_GUI.closeItem.symbol)) {
+                                    ItemStack item = RAID_PASS_GUI.closeItem.item.copy();
+                                    List<Text> lore = new ArrayList<>();
+                                    for (String line : RAID_PASS_GUI.closeItem.itemLore) {
+                                        lore.add(deserialize(line, parseContext));
+                                    }
+                                    GuiElement element = new GuiElementBuilder(item)
+                                            .setName(deserialize(RAID_PASS_GUI.closeItem.itemName, parseContext))
+                                            .setLore(lore)
+                                            .setCallback(clickType -> pageEntry.getValue().close())
+                                            .build();
+                                    pageEntry.getValue().setSlot(slot, element);
+                                }
+
+                                for (Integer slot : RAID_PASS_GUI.getSlotsBySymbol(RAID_PASS_GUI.backgroundItem.symbol)) {
+                                    ItemStack item = RAID_PASS_GUI.backgroundItem.item.copy();
+                                    List<Text> lore = new ArrayList<>();
+                                    for (String line : RAID_PASS_GUI.backgroundItem.itemLore) {
+                                        lore.add(deserialize(line, parseContext));
+                                    }
+                                    GuiElement element = new GuiElementBuilder(item)
+                                            .setName(deserialize(RAID_PASS_GUI.backgroundItem.itemName, parseContext))
+                                            .setLore(lore)
+                                            .build();
+                                    pageEntry.getValue().setSlot(slot, element);
+                                }
+                            }
+                            if (!pages.isEmpty()) {
+                                pages.get(1).open();
+                            }
+                        } else {
+                            if (PlayerRaidCache.isInRaid(player)) {
+                                player.sendMessage(deserialize(MESSAGES.feedback.warnings.alreadyInRaid, parseContextBuilder.build()));
+                                return TypedActionResult.fail(itemStack);
+                            }
+
+                            for (Raid raid : activeRaids.values()) {
+                                ParseContext parseContext = parseContextBuilder.raid(raid).build();
+                                if (raid.boss.bossId.equalsIgnoreCase(bossId)) {
+                                    if (raid.requiresPass) {
+                                        if (raid.phase == RaidPhase.SETUP) {
+                                            if (raid.participatingPlayers.size() < raid.maxPlayers || raid.maxPlayers == -1 || Permissions.check(player, "novaraids.override")) {
+                                                if (raid.addPlayer(player.getUuid(), true)) {
+                                                    itemStack.decrement(1);
+                                                    player.sendMessage(deserialize(MESSAGES.feedback.joinedRaid, parseContext));
+                                                    break;
+                                                }
+                                            } else {
+                                                player.sendMessage(deserialize(MESSAGES.feedback.warnings.maxPlayers, parseContext));
+                                            }
+                                        } else {
+                                            player.sendMessage(deserialize(MESSAGES.feedback.warnings.notJoinable, parseContext));
+                                        }
+                                    } else {
+                                        player.sendMessage(deserialize(MESSAGES.feedback.warnings.noPassNeeded, parseContext));
+                                    }
+                                }
+                            }
+                        }
+                    } else if (customData.copyNbt().getString("raid_item").equals("raid_voucher") && CONFIG.itemSettings.voucherSettings.vouchersEnabled) {
+                        String bossId = customData.copyNbt().getString("raid_boss");
+                        String categoryId = customData.copyNbt().getString("raid_category");
+                        if (bossId.equalsIgnoreCase("*")) {
+                            List<Boss> availableRaids = new ArrayList<>();
+                            Category category = null;
+                            if (categoryId.equalsIgnoreCase("*")) {
+                                availableRaids.addAll(BOSSES.values());
+                            } else {
+                                category = Category.getCategory(categoryId);
+                                if (category == null) {
+                                    player.sendMessage(deserialize(MESSAGES.feedback.warnings.categoryDoesntExist, parseContextBuilder.build()));
+                                    return TypedActionResult.fail(itemStack);
+                                }
+                                availableRaids.addAll(category.bosses.values());
+                            }
+
+                            if (availableRaids.isEmpty()) {
+                                player.sendMessage(deserialize(MESSAGES.feedback.warnings.noBossesAvailable, parseContextBuilder.category(category).build()));
+                                return TypedActionResult.fail(itemStack);
+                            }
+
+                            Map<Integer, SimpleGui> pages = new HashMap<>();
+                            int pageTotal = RAID_VOUCHER_GUI.getPageTotal(availableRaids.size(), RAID_VOUCHER_GUI.raidDisplayItem.symbol);
+                            for (int i = 1; i <= pageTotal; i++) {
+                                SimpleGui gui = new SimpleGui(RAID_VOUCHER_GUI.getScreenHandler(), player, false);
+                                gui.setTitle(deserialize(RAID_VOUCHER_GUI.guiTitle, parseContextBuilder.build()));
+                                pages.put(i, gui);
+                            }
+
+                            int index = 0;
+                            for (Map.Entry<Integer, SimpleGui> pageEntry : pages.entrySet()) {
+                                for (Integer slot : RAID_VOUCHER_GUI.getSlotsBySymbol(RAID_VOUCHER_GUI.raidDisplayItem.symbol)) {
+                                    if (index < availableRaids.size()) {
+                                        Boss boss = availableRaids.get(index);
+                                        ParseContext parseContext = parseContextBuilder.boss(boss).prioritizeRaid(false).build();
+
+                                        List<Text> lore = new ArrayList<>();
+                                        for (String line : RAID_VOUCHER_GUI.raidDisplayItem.itemLore) {
+                                            lore.add(deserialize(line, parseContext));
+                                        }
+
+                                        logInfo("Creating Boss Pokemon: " + boss.bossId);
+                                        ItemStack item = PokemonItem.from(boss.pokemonDetails.createDisplayPokemon());
+                                        GuiElement element = new GuiElementBuilder(item)
+                                                .setName(deserialize(RAID_VOUCHER_GUI.raidDisplayItem.itemName, parseContext))
+                                                .setLore(lore)
+                                                .setCallback((num, clickType, slotActionType) -> {
+                                                    if (clickType.isLeft) {
+                                                        queueRaid(boss, player, itemStack.copy(), null, null);
+                                                        itemStack.decrement(1);
+                                                        player.sendMessage(deserialize(MESSAGES.feedback.usedVoucher, parseContext));
+                                                        pageEntry.getValue().close();
+                                                    }
+                                                }).build();
+                                        pageEntry.getValue().setSlot(slot, element);
+                                        index++;
+                                    } else {
+                                        ItemStack item = RAID_VOUCHER_GUI.backgroundItem.item.copy();
+                                        List<Text> lore = new ArrayList<>();
+                                        for (String line : RAID_VOUCHER_GUI.backgroundItem.itemLore) {
+                                            lore.add(deserialize(line, parseContextBuilder.build()));
+                                        }
+                                        GuiElement element = new GuiElementBuilder(item)
+                                                .setName(deserialize(RAID_VOUCHER_GUI.backgroundItem.itemName, parseContextBuilder.build()))
+                                                .setLore(lore)
+                                                .build();
+                                        pageEntry.getValue().setSlot(slot, element);
+                                    }
+                                }
+
+                                ParseContext parseContext = parseContextBuilder.build();
+                                if (pageEntry.getKey() < pageTotal) {
+                                    for (Integer slot : RAID_VOUCHER_GUI.getSlotsBySymbol(RAID_VOUCHER_GUI.nextItem.symbol)) {
+                                        ItemStack item = RAID_VOUCHER_GUI.nextItem.item.copy();
+                                        List<Text> lore = new ArrayList<>();
+                                        for (String line : RAID_VOUCHER_GUI.nextItem.itemLore) {
+                                            lore.add(deserialize(line, parseContext));
+                                        }
+                                        GuiElement element = new GuiElementBuilder(item)
+                                                .setName(deserialize(RAID_VOUCHER_GUI.nextItem.itemName, parseContext))
+                                                .setLore(lore)
+                                                .setCallback(clickType -> {
+                                                    pageEntry.getValue().close();
+                                                    pages.get(pageEntry.getKey() + 1).open();
+                                                })
+                                                .build();
+                                        pageEntry.getValue().setSlot(slot, element);
+                                    }
+                                }
+
+                                if (pageEntry.getKey() > 1) {
+                                    for (Integer slot : RAID_VOUCHER_GUI.getSlotsBySymbol(RAID_VOUCHER_GUI.previousItem.symbol)) {
+                                        ItemStack item = RAID_VOUCHER_GUI.previousItem.item.copy();
+                                        List<Text> lore = new ArrayList<>();
+                                        for (String line : RAID_VOUCHER_GUI.previousItem.itemLore) {
+                                            lore.add(deserialize(line, parseContext));
+                                        }
+                                        GuiElement element = new GuiElementBuilder(item)
+                                                .setName(deserialize(RAID_VOUCHER_GUI.previousItem.itemName, parseContext))
+                                                .setLore(lore)
+                                                .setCallback(clickType -> {
+                                                    pageEntry.getValue().close();
+                                                    pages.get(pageEntry.getKey() - 1).open();
+                                                })
+                                                .build();
+                                        pageEntry.getValue().setSlot(slot, element);
+                                    }
+                                }
+
+                                for (Integer slot : RAID_VOUCHER_GUI.getSlotsBySymbol(RAID_VOUCHER_GUI.closeItem.symbol)) {
+                                    ItemStack item = RAID_VOUCHER_GUI.closeItem.item.copy();
+                                    List<Text> lore = new ArrayList<>();
+                                    for (String line : RAID_VOUCHER_GUI.closeItem.itemLore) {
+                                        lore.add(deserialize(line, parseContext));
+                                    }
+                                    GuiElement element = new GuiElementBuilder(item)
+                                            .setName(deserialize(RAID_VOUCHER_GUI.closeItem.itemName, parseContext))
+                                            .setLore(lore)
+                                            .setCallback(clickType -> pageEntry.getValue().close())
+                                            .build();
+                                    pageEntry.getValue().setSlot(slot, element);
+                                }
+
+                                for (Integer slot : RAID_VOUCHER_GUI.getSlotsBySymbol(RAID_VOUCHER_GUI.backgroundItem.symbol)) {
+                                    ItemStack item = RAID_VOUCHER_GUI.backgroundItem.item.copy();
+                                    List<Text> lore = new ArrayList<>();
+                                    for (String line : RAID_VOUCHER_GUI.backgroundItem.itemLore) {
+                                        lore.add(deserialize(line, parseContext));
+                                    }
+                                    GuiElement element = new GuiElementBuilder(item)
+                                            .setName(deserialize(RAID_VOUCHER_GUI.backgroundItem.itemName, parseContext))
+                                            .setLore(lore)
+                                            .build();
+                                    pageEntry.getValue().setSlot(slot, element);
+                                }
+                            }
+                            if (!pages.isEmpty()) {
+                                pages.get(1).open();
+                            }
+                        } else if (bossId.equalsIgnoreCase("random")) {
+                            Boss boss;
+                            if (categoryId.equalsIgnoreCase("null")) {
+                                boss = Boss.getRandomBoss(null);
+                            } else {
+                                boss = Boss.getRandomBoss(categoryId, null);
+                            }
+
+                            if (boss == null) {
+                                player.sendMessage(deserialize(MESSAGES.feedback.warnings.noBossesAvailable, parseContextBuilder.build()));
+                                return TypedActionResult.fail(itemStack);
+                            }
+
+                            queueRaid(boss, player, itemStack.copy(), null, null);
+                            itemStack.decrement(1);
+                            player.sendMessage(deserialize(MESSAGES.feedback.usedVoucher, parseContextBuilder.boss(boss).prioritizeRaid(false).build()));
+                        } else {
+                            Boss boss = Boss.getBoss(bossId);
+                            if (boss == null) {
+                                player.sendMessage(deserialize(MESSAGES.feedback.warnings.bossDoesntExist, parseContextBuilder.build()));
+                                return TypedActionResult.fail(itemStack);
+                            }
+                            queueRaid(boss, player, itemStack.copy(), null, null);
+                            itemStack.decrement(1);
+                            player.sendMessage(deserialize(MESSAGES.feedback.usedVoucher, parseContextBuilder.boss(boss).prioritizeRaid(false).build()));
+                        }
+                    } else if (customData.copyNbt().getString("raid_item").equals("raid_ball")) {
+                        ParseContext parseContext = parseContextBuilder.build();
+                        boolean canThrow;
+
+                        if (CONFIG.itemSettings.raidBallSettings.playerLinkedRaidBalls && customData.contains("owner_uuid")) {
+                            if (!customData.copyNbt().getUuid("owner_uuid").equals(player.getUuid())) {
+                                player.sendMessage(deserialize(MESSAGES.feedback.warnings.notYourRaidPokeball, parseContext));
+                                return TypedActionResult.fail(itemStack);
+                            }
+                        }
+
+                        canThrow = PlayerRaidCache.isInRaid(player.getUuid());
+
+                        if (canThrow) {
+                            canThrow = false;
+
+                            Raid raid = PlayerRaidCache.currentRaid(player);
+                            if (raid != null && raid.phase == RaidPhase.CATCH) {
+                                if (!raid.isRaidBallsEnabled()) {
+                                    player.sendMessage(deserialize(MESSAGES.feedback.warnings.notCatchPhase, parseContext));
+                                    return TypedActionResult.fail(itemStack);
+                                }
+                                if (customData.contains("raid_boss") && customData.contains("raid_category")) {
+                                    String boss = customData.copyNbt().getString("raid_boss");
+                                    String category = customData.copyNbt().getString("raid_category");
+                                    if (boss.equalsIgnoreCase("*") && category.equalsIgnoreCase("*")) {
+                                        if (raid.boss.itemSettings.allowGlobalPokeballs) {
+                                            canThrow = true;
+                                        }
+                                    } else if (boss.equalsIgnoreCase("*")) {
+                                        if (raid.boss.categoryId.equalsIgnoreCase(category)) {
+                                            if (raid.boss.itemSettings.allowCategoryPokeballs) {
+                                                canThrow = true;
+                                            }
+                                        }
+                                    } else {
+                                        if (raid.boss.bossId.equalsIgnoreCase(boss)) {
+                                            canThrow = true;
+                                        }
+                                    }
+                                } else {
+                                    canThrow = true;
+                                }
+                            }
+                        } else {
+                            player.sendMessage(deserialize(MESSAGES.feedback.warnings.raidPokeballOutsideRaid, parseContext));
+                            return TypedActionResult.fail(itemStack);
+                        }
+
+                        if (!canThrow) {
+                            player.sendMessage(deserialize(MESSAGES.feedback.warnings.notCatchPhase, parseContext));
+                            return TypedActionResult.fail(itemStack);
+                        } else {
+                            return TypedActionResult.pass(itemStack);
+                        }
+                    }
+                }
+            }
+
+            Raid raid = PlayerRaidCache.currentRaid(player);
+            if (raid == null) return TypedActionResult.pass(itemStack);
+            ParseContext parseContext = parseContextBuilder.raid(raid).build();
+
+            if (isPokeball(itemStack) && raid.isRaidBallsEnabled()) {
+                player.sendMessage(deserialize(MESSAGES.feedback.warnings.normalPokeball, parseContext));
+                return TypedActionResult.fail(itemStack);
+            }
+
+            if (raid.phase != RaidPhase.CATCH || !CONFIG.raidSettings.disableContrabandInCatchPhase) {
+                List<String> bannedBagItemIDs = new ArrayList<>(CONFIG.raidSettings.globalContraband.bannedBagItems);
+                bannedBagItemIDs.addAll(raid.boss.raidDetails.contraband.bannedBagItems);
+                bannedBagItemIDs.addAll(raid.category.raidDetails.contraband.bannedBagItems);
+
+                List<Item> bannedBagItems = new ArrayList<>();
+                for (String itemID : bannedBagItemIDs) {
+                    if (Registries.ITEM.containsId(Identifier.of(itemID))) {
+                        bannedBagItems.add(Registries.ITEM.get(Identifier.of(itemID)));
+                    }
+                }
+
+                if (bannedBagItems.contains(itemStack.getItem())) {
+                    player.sendMessage(deserialize(MESSAGES.feedback.warnings.bannedBagItem.replaceAll("%banned%", itemStack.getItem().getName().getString()), parseContext));
+                    return TypedActionResult.fail(itemStack);
+                }
+            }
+
+            return TypedActionResult.pass(itemStack);
+        }
+        return TypedActionResult.pass(playerEntity.getStackInHand(hand));
+    }
+
+    private static boolean isPokeball(ItemStack itemstack) {
+        for (PokeBallItem item : CobblemonItems.pokeBalls) {
+            if (item.equals(itemstack.getItem())) {
+                return true;
+            }
+        }
+        return false;
+    }
+}

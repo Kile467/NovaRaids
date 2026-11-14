@@ -1,0 +1,297 @@
+package me.unariginal.novaraids.handlers;
+
+import com.cobblemon.mod.common.Cobblemon;
+import com.cobblemon.mod.common.api.drop.DropTable;
+import com.cobblemon.mod.common.api.events.CobblemonEvents;
+import com.cobblemon.mod.common.api.events.pokemon.ShinyChanceCalculationEvent;
+import com.cobblemon.mod.common.api.moves.MoveTemplate;
+import com.cobblemon.mod.common.api.moves.Moves;
+import com.cobblemon.mod.common.api.pokemon.Natures;
+import com.cobblemon.mod.common.api.pokemon.PokemonProperties;
+import com.cobblemon.mod.common.api.pokemon.PokemonSpecies;
+import com.cobblemon.mod.common.api.pokemon.stats.SidemodEvSource;
+import com.cobblemon.mod.common.api.pokemon.stats.Stat;
+import com.cobblemon.mod.common.api.storage.party.PartyStore;
+import com.cobblemon.mod.common.api.types.tera.TeraTypes;
+import com.cobblemon.mod.common.battles.*;
+import com.cobblemon.mod.common.battles.actor.PlayerBattleActor;
+import com.cobblemon.mod.common.battles.actor.PokemonBattleActor;
+import com.cobblemon.mod.common.battles.pokemon.BattlePokemon;
+import com.cobblemon.mod.common.entity.pokemon.PokemonEntity;
+import com.cobblemon.mod.common.pokemon.*;
+import kotlin.Unit;
+import me.unariginal.novaraids.NovaRaids;
+import me.unariginal.novaraids.ai.StrongBattleAIFix;
+import me.unariginal.novaraids.data.categories.bosses.CatchSettings;
+import me.unariginal.novaraids.raid.Raid;
+import net.minecraft.entity.effect.StatusEffectInstance;
+import net.minecraft.entity.effect.StatusEffects;
+import net.minecraft.nbt.NbtCompound;
+import net.minecraft.server.network.ServerPlayerEntity;
+import org.jetbrains.annotations.Nullable;
+
+import java.lang.reflect.Field;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
+
+import static me.unariginal.novaraids.NovaRaids.logError;
+
+public class BattleHandler {
+    public static boolean checkRate(float shinyRate) {
+        if (shinyRate >= 1) return (kotlin.random.Random.Default.nextFloat() < (1 / shinyRate));
+        else return (kotlin.random.Random.Default.nextFloat() < shinyRate);
+    }
+
+    public static void invokeCatchEncounter(Raid raid, ServerPlayerEntity player, float shinyChance, int minPerfectIvs) {
+        CatchSettings settings = raid.boss.catchSettings;
+        Pokemon pokemon = new Pokemon();
+        pokemon.copyFrom(raid.bossPokemon);
+        pokemon.setUuid(UUID.randomUUID());
+
+        NbtCompound data = new NbtCompound();
+        data.putBoolean("raid_entity", true);
+        data.putBoolean("boss_clone", true);
+        data.putBoolean("catch_encounter", true);
+        NbtCompound catchPersistentData = new NbtCompound();
+        catchPersistentData.put("raid_data", data);
+        pokemon.setPersistentData$common(catchPersistentData);
+
+        if (!settings.speciesOverride.equalsIgnoreCase(raid.boss.pokemonDetails.species)) {
+            Species species = PokemonSpecies.getByName(settings.speciesOverride);
+            if (species != null) pokemon.setSpecies(species);
+        }
+
+        if (shinyChance > 0) {
+            AtomicReference<Float> newShinyChance = new AtomicReference<>(shinyChance);
+            CobblemonEvents.SHINY_CHANCE_CALCULATION.post(new ShinyChanceCalculationEvent[]{new ShinyChanceCalculationEvent(shinyChance, pokemon)}, event -> {
+                newShinyChance.set(event.calculate(player));
+                return Unit.INSTANCE;
+            });
+            shinyChance = newShinyChance.get();
+            pokemon.setShiny(checkRate(shinyChance));
+        } else pokemon.setShiny(false);
+
+        if (!settings.keepScale) pokemon.setScaleModifier(1.0f);
+
+        if (!settings.keepFeatures) {
+            pokemon.setFeatures(new ArrayList<>());
+            pokemon.updateAspects();
+            pokemon.updateForm();
+            PokemonProperties.Companion.parse(settings.featuresOverride).apply(pokemon);
+        }
+
+        if (!settings.keepHeldItem) pokemon.removeHeldItem();
+
+        if (settings.keepEvs) {
+            EVs new_evs = new EVs();
+            for (Map.Entry<? extends Stat, ? extends Integer> ev : pokemon.getEvs()) {
+                new_evs.add(ev.getKey(), ev.getValue(), new SidemodEvSource(NovaRaids.MOD_ID, pokemon));
+            }
+            for (Map.Entry<? extends Stat, ? extends Integer> ev : new_evs) {
+                pokemon.setEV(ev.getKey(), ev.getValue());
+            }
+        } else {
+            for (Map.Entry<? extends Stat, ? extends Integer> ev : pokemon.getEvs()) {
+                pokemon.setEV(ev.getKey(), 0);
+            }
+        }
+
+        if (settings.randomizeGender) {
+            pokemon.setGender(
+                    (pokemon.getForm().getMaleRatio() >= 0F && pokemon.getForm().getMaleRatio() <= 1f) ?
+                            Gender.GENDERLESS :
+                            (pokemon.getForm().getMaleRatio() == 1F || new Random().nextFloat() < pokemon.getForm().getMaleRatio()) ?
+                                    Gender.MALE : Gender.FEMALE
+            );
+        } else pokemon.setGender(raid.bossPokemon.getGender());
+
+        if (settings.randomizeNature) pokemon.setNature(Natures.getRandomNature());
+        else pokemon.setNature(raid.bossPokemon.getNature());
+
+        if (settings.randomizeAbility) pokemon.updateAbility(pokemon.getForm().getAbilities().select(pokemon.getSpecies(), pokemon.getAspects()).getFirst());
+        else pokemon.updateAbility(raid.bossPokemon.getAbility());
+
+        pokemon.setLevel(raid.modifier == null ? settings.levelOverride : settings.levelOverride + raid.modifier.catchSettingModifiers.levelOverrideOffset);
+
+        if (settings.resetMoves) {
+            pokemon.getMoveSet().clear();
+            Set<MoveTemplate> moves = pokemon.getSpecies().getMoves().getLevelUpMovesUpTo(pokemon.getLevel());
+            int slot = 0;
+            for (MoveTemplate move : moves) {
+                pokemon.getMoveSet().setMove(slot, move.create());
+                slot++;
+                if (slot > 4) break;
+            }
+        }
+
+        if (!settings.movesOverride.isEmpty()) {
+            pokemon.getMoveSet().clear();
+
+            for (int i = 0; i < settings.movesOverride.size() || i < 4; i++) {
+                MoveTemplate moveTemplate = Moves.getByName(settings.movesOverride.get(i));
+                if (moveTemplate == null) {
+                    i--;
+                    continue;
+                }
+
+                pokemon.getMoveSet().setMove(i, moveTemplate.create(moveTemplate.getMaxPp()));
+            }
+        }
+
+        pokemon.setFriendship(settings.friendshipOverride, true);
+
+        pokemon.setDmaxLevel(settings.dynamaxLevelOverride);
+
+        if (settings.randomizeTeraType) pokemon.setTeraType(TeraTypes.random(true));
+
+        if (settings.resetGmaxFactor) pokemon.setGmaxFactor(false);
+
+        PokemonEntity bossClone = pokemon.sendOut(raid.location.getServerWorld(), player.getPos().offset(player.getFacing(), 1), null, entity -> {
+            entity.addStatusEffect(new StatusEffectInstance(StatusEffects.SLOWNESS, -1, 9999, false, false));
+            entity.setNoGravity(true);
+            entity.setMovementSpeed(0.0f);
+            entity.setDrops(new DropTable());
+            return Unit.INSTANCE;
+        });
+
+        if (settings.randomizeIvs) {
+            IVs randomIvs = IVs.createRandomIVs(minPerfectIvs);
+            for (Map.Entry<? extends Stat, ? extends Integer> iv : randomIvs) {
+                pokemon.setIV(iv.getKey(), iv.getValue());
+            }
+        }
+
+        PartyStore party = Cobblemon.INSTANCE.getStorage().getParty(player);
+
+        if (bossClone != null) {
+            raid.addClone(bossClone, player);
+            skilledPvE(player, bossClone, null, BattleFormat.Companion.getGEN_9_SINGLES(), false, raid.boss.raidDetails.healPartyOnChallenge, Cobblemon.config.getDefaultFleeDistance(), party, raid.boss.bossDetails.aiSkillLevel + (raid.modifier == null ? 0 : raid.modifier.bossDetailModifiers.skillLevelOffset));
+        }
+    }
+
+    public static void invokeBattle(Raid raid, ServerPlayerEntity player) {
+        Pokemon pokemon = new Pokemon();
+        pokemon.copyFrom(raid.bossPokemonUncatchable);
+        pokemon.setUuid(UUID.randomUUID());
+        if (!raid.boss.bossDetails.rerollFeaturesEachBattle) PokemonProperties.Companion.parse(raid.boss.pokemonDetails.getRandomFeature());
+
+        if (raid.boss.pokemonDetails.level > Cobblemon.config.getMaxPokemonLevel()) {
+            int finalLevel = raid.boss.pokemonDetails.level;
+            if (raid.modifier != null) finalLevel += raid.modifier.bossPokemonModifiers.levelOffset;
+            if (finalLevel <= Cobblemon.config.getMaxPokemonLevel()) pokemon.setLevel(finalLevel);
+            else {
+                try {
+                    Field levelField = pokemon.getClass().getDeclaredField("level");
+                    levelField.setAccessible(true);
+                    levelField.set(pokemon, finalLevel);
+                } catch (NoSuchFieldException | IllegalAccessException e) {
+                    NovaRaids.LOGGER.error("[NovaRaids] Failed to set pokemon level above {}.", Cobblemon.config.getMaxPokemonLevel(), e);
+                }
+            }
+        }
+        pokemon.heal();
+
+        NbtCompound data = new NbtCompound();
+        data.putBoolean("raid_entity", true);
+        data.putBoolean("boss_clone", true);
+        data.putBoolean("battle_clone", true);
+        NbtCompound battlePersistentData = new NbtCompound();
+        battlePersistentData.put("raid_data", data);
+        pokemon.setPersistentData$common(battlePersistentData);
+
+        pokemon.setShiny(false);
+        pokemon.setScaleModifier(0.1f);
+
+        PokemonEntity bossClone = pokemon.sendOut(raid.location.getServerWorld(), raid.location.bossLocation.getPos(), null, entity -> {
+            entity.addStatusEffect(new StatusEffectInstance(StatusEffects.SLOWNESS, -1, 9999, false, false));
+            entity.setNoGravity(true);
+            entity.setAiDisabled(true);
+            entity.setMovementSpeed(0.0f);
+            entity.setDrops(new DropTable());
+            return Unit.INSTANCE;
+        });
+
+        if (bossClone != null) {
+            raid.addClone(bossClone, player);
+            PartyStore party = Cobblemon.INSTANCE.getStorage().getParty(player);
+            skilledPvE(
+                    player,
+                    bossClone,
+                    null,
+                    BattleFormat.Companion.getGEN_9_SINGLES(),
+                    false,
+                    raid.boss.raidDetails.healPartyOnChallenge,
+                    raid.location.borderRadius * 2,
+                    party,
+                    raid.boss.bossDetails.aiSkillLevel + (raid.modifier == null ? 0 : raid.modifier.bossDetailModifiers.skillLevelOffset)
+            ).ifErrored(error -> {
+                pokemon.tryRecallWithAnimation();
+                raid.removeClone(bossClone, false);
+                return Unit.INSTANCE;
+            });
+        }
+    }
+
+    private static BattleStartResult skilledPvE(ServerPlayerEntity player, PokemonEntity pokemonEntity, @Nullable UUID leadingPokemon, BattleFormat battleFormat, boolean cloneParties, boolean healFirst, float fleeDistance, PartyStore party, int skill) {
+        List<BattlePokemon> playerTeam = party.toBattleTeam(cloneParties, healFirst, leadingPokemon);
+        playerTeam.sort((pokemon1, pokemon2) -> Boolean.compare(pokemon1.getHealth() <= 0, pokemon2.getHealth() <= 0));
+        PlayerBattleActor playerActor = new PlayerBattleActor(player.getUuid(), playerTeam);
+        PokemonBattleActor wildActor = new PokemonBattleActor(pokemonEntity.getPokemon().getUuid(), new BattlePokemon(pokemonEntity.getPokemon(), pokemonEntity.getPokemon(), pEntity -> Unit.INSTANCE), fleeDistance, new StrongBattleAIFix(skill));
+        ErroredBattleStart errors = new ErroredBattleStart();
+
+        if (!playerTeam.isEmpty() && playerTeam.getFirst().getHealth() <= 0) {
+            logError("Not enough pokemon");
+            errors.getParticipantErrors().get(playerActor).add(
+                    BattleStartError.Companion.insufficientPokemon(
+                            player,
+                            battleFormat.getBattleType().getSlotsPerActor(),
+                            playerActor.getPokemonList().size()
+                    )
+            );
+        }
+
+        if (playerActor.getPokemonList().size() < battleFormat.getBattleType().getSlotsPerActor()) {
+            logError("Not enough pokemon");
+            errors.getParticipantErrors().get(playerActor).add(
+                    BattleStartError.Companion.insufficientPokemon(
+                            player,
+                            battleFormat.getBattleType().getSlotsPerActor(),
+                            playerActor.getPokemonList().size()
+                    )
+            );
+        }
+
+        if (playerActor.getPokemonList().stream().anyMatch(pokemon -> {
+            if (pokemon.getEntity() != null) return pokemon.getEntity().isBusy();
+            return false;
+        })) {
+            logError("Target is busy");
+            errors.getParticipantErrors().get(playerActor).add(BattleStartError.Companion.targetIsBusy(player.getDisplayName() != null ? player.getDisplayName() : player.getName()));
+        }
+
+        if (BattleRegistry.getBattleByParticipatingPlayer(player) != null) {
+            logError("Already in battle");
+            errors.getParticipantErrors().get(playerActor).add(BattleStartError.Companion.alreadyInBattle(playerActor));
+        }
+
+        if (pokemonEntity.getBattleId() != null) {
+            logError("Already in battle");
+            errors.getParticipantErrors().get(wildActor).add(BattleStartError.Companion.alreadyInBattle(wildActor));
+        }
+
+        try {
+            playerActor.setBattleTheme(pokemonEntity.getBattleTheme());
+        } catch (NoSuchMethodError e) {
+            NovaRaids.LOGGER.error("No Such Method Error", e);
+        }
+
+        if (errors.isEmpty()) {
+            return BattleRegistry.startBattle(battleFormat, new BattleSide(playerActor), new BattleSide(wildActor), true).ifSuccessful(pokemonBattle -> {
+                if (!cloneParties) pokemonEntity.setBattleId(pokemonBattle.getBattleId());
+                return Unit.INSTANCE;
+            });
+        } else {
+            return errors;
+        }
+    }
+}

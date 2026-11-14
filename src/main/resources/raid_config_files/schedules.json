@@ -3,14 +3,12 @@
   "schedules": [
     {
       "type": "random",
-      "bounds": {
-        "min": 1200,
-        "max": 3600
-      },
+      "min_seconds": 1200,
+      "max_seconds": 3600,
       "bosses": [
         {
           "type": "category",
-          "category": "common",
+          "category_id": "common",
           "weight": 5.0,
           "blacklisted_bosses": []
         },
@@ -23,12 +21,13 @@
     },
     {
       "type": "cron",
-      "expression": "0 30 * ? * *",
+      "expression": "0 30 0 ? * * *",
       "bosses": [
         {
           "type": "category",
-          "category": "common",
-          "weight": 5.0
+          "category_id": "common",
+          "weight": 5.0,
+          "blacklisted_bosses": []
         },
         {
           "type": "boss",
@@ -43,8 +42,9 @@
       "bosses": [
         {
           "type": "category",
-          "category": "common",
-          "weight": 5.0
+          "category_id": "common",
+          "weight": 5.0,
+          "blacklisted_bosses": []
         },
         {
           "type": "boss",
@@ -68,8 +68,9 @@
       "bosses": [
         {
           "type": "category",
-          "category": "common",
-          "weight": 5.0
+          "category_id": "common",
+          "weight": 5.0,
+          "blacklisted_bosses": []
         },
         {
           "type": "boss",

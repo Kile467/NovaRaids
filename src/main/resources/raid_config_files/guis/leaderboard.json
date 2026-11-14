@@ -1,0 +1,55 @@
+{
+  "gui_title": "%boss_name% Raid Results",
+  "use_hopper_gui": false,
+  "rows": 6,
+  "gui_layout": [
+    "#########",
+    "#########",
+    "#########",
+    "#########",
+    "#########",
+    "P___C___N"
+  ],
+  "placement_item": {
+    "symbol": "#",
+    "item": {
+      "id": "minecraft:player_head"
+    },
+    "item_name": "<gold>[%place%%ordinal%] %player%",
+    "item_lore": [
+      "<gray>Damage: %damage%"
+    ]
+  },
+  "background_item": {
+    "symbol": "_",
+    "item": {
+      "id": "minecraft:air"
+    },
+    "item_name": "",
+    "item_lore": []
+  },
+  "previous_item": {
+    "symbol": "P",
+    "item": {
+      "id": "minecraft:arrow"
+    },
+    "item_name": "Previous",
+    "item_lore": []
+  },
+  "close_item": {
+    "symbol": "C",
+    "item": {
+      "id": "minecraft:barrier"
+    },
+    "item_name": "Close",
+    "item_lore": []
+  },
+  "next_item": {
+    "symbol": "N",
+    "item": {
+      "id": "minecraft:arrow"
+    },
+    "item_name": "Next",
+    "item_lore": []
+  }
+}

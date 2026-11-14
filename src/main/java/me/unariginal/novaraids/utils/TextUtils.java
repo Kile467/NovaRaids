@@ -1,120 +1,268 @@
 package me.unariginal.novaraids.utils;
 
+import com.cobblemon.mod.common.api.pokemon.stats.Stats;
 import com.mojang.authlib.GameProfile;
 import me.unariginal.novaraids.NovaRaids;
-import me.unariginal.novaraids.data.bosssettings.Boss;
-import me.unariginal.novaraids.managers.Raid;
+import me.unariginal.novaraids.config.RaidHistory;
+import me.unariginal.novaraids.data.categories.Category;
+import me.unariginal.novaraids.data.categories.bosses.Boss;
+import me.unariginal.novaraids.data.categories.modifiers.CategoryModifier;
+import me.unariginal.novaraids.data.players.PlayerRaidData;
+import me.unariginal.novaraids.placeholders.ParseContext;
+import me.unariginal.novaraids.placeholders.interfaces.*;
+import me.unariginal.novaraids.raid.Raid;
+import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.MiniMessage;
+import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.Arrays;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import static me.unariginal.novaraids.config.ConfigManager.CONFIG;
+import static me.unariginal.novaraids.placeholders.PlaceholderManager.*;
 
 public class TextUtils {
-    private static final NovaRaids nr = NovaRaids.INSTANCE;
+    private static final Pattern pattern = Pattern.compile("%([^%]+)%");
+    public static final MiniMessage miniMessage = MiniMessage.builder()
+            .tags(TagResolver.builder().build())
+            .build();
 
     public static Text deserialize(String text) {
-        return nr.audience().toNative(MiniMessage.miniMessage().deserialize("<!i>" + text));
+        return deserialize(text, ParseContext.builder().build());
     }
 
-    public static String parse(String text) {
-        return text.replaceAll("%prefix%", nr.messagesConfig().prefix);
+    public static Text deserialize(String text, ParseContext parseContext) {
+        text = parse(text, parseContext);
+        text = "<!i>" + text;
+
+        return NovaRaids.INSTANCE.audience.toNative(MiniMessage.miniMessage().deserialize(text));
     }
 
-    public static String parse(String text, ServerPlayerEntity sourcePlayer, ServerPlayerEntity targetPlayer, int amount, String itemType) {
+    public static Component deserializeComponent(String text) {
+        return deserializeComponent(text, ParseContext.builder().build());
+    }
+
+    public static Component deserializeComponent(String text, ParseContext parseContext) {
+        text = parse(text, parseContext);
+        text = "<!i>" + text;
+
+        return MiniMessage.miniMessage().deserialize(text);
+    }
+
+    public static String parse(String text, ParseContext parseContext) {
+        if (CONFIG.usePlaceholderApi && usingPlaceholderAPI) text = placeholderAPIService.parse(text, parseContext);
+//        if (usingMiniPlaceholders) text = miniPlaceholdersService.parse(text, parseContext.getPlayer(), parseContext.getRaidHistory());
+
         text = parse(text);
-        return text.replaceAll("%target%", targetPlayer.getNameForScoreboard())
-                .replaceAll("%raid_item%", itemType)
-                .replaceAll("%amount%", amount == 0 ? "a" : String.valueOf(amount))
-                .replaceAll("%source%", sourcePlayer != null ? sourcePlayer.getNameForScoreboard() : "Server");
-    }
-
-    public static String parse(String message, Raid raid) {
-        message = parse(message);
-        message = parse(message, raid.bossInfo());
-        long phaseRemaining = ((raid.phaseStartTime() + (raid.phaseLength() * 20L)) - NovaRaids.INSTANCE.server().getOverworld().getTime()) / 20;
-        if (phaseRemaining < 0) {
-            phaseRemaining = 0;
-        }
-
-        message = spaceReplace(message, "%boss.form%", !raid.raidBossPokemon().getForm().getName().equalsIgnoreCase("normal"), raid.raidBossPokemon().getForm().getName());
-
-        return message
-                .replaceAll("%boss.maxhp%", String.valueOf(raid.maxHealth()))
-                .replaceAll("%raid.defeat_time%", (raid.bossDefeatTime() > 0) ? TextUtils.hms(raid.bossDefeatTime() * 20L) : "")
-                .replaceAll("%raid.completion_time%", (raid.raidCompletionTime() > 0) ? TextUtils.hms(raid.raidCompletionTime()) : "")
-                .replaceAll("%raid.phase_timer%", TextUtils.hms(phaseRemaining))
-                .replaceAll("%boss.currenthp%", String.valueOf(raid.currentHealth()))
-                .replaceAll("%raid.total_damage%", String.valueOf(raid.maxHealth() - raid.currentHealth()))
-                .replaceAll("%raid.timer%", TextUtils.hms(raid.raidTimer() / 20))
-                .replaceAll("%raid.player_count%", String.valueOf(raid.participatingPlayers.size()))
-                .replaceAll("%raid.max_players%", (raid.maxPlayers() == -1) ? "∞" : String.valueOf(raid.maxPlayers()))
-                .replaceAll("%raid.phase%", raid.getPhase())
-                .replaceAll("%raid.category%", raid.raidBossCategory().name())
-                .replaceAll("%raid.category.id%", raid.raidBossCategory().id())
-                .replaceAll("%raid.id%", String.valueOf(NovaRaids.INSTANCE.getRaidId(raid)))
-                .replaceAll("%raid.min_players%", String.valueOf(raid.minPlayers()))
-                .replaceAll("%raid.join_method%", (raid.raidBossCategory().requirePass()) ? "A Raid Pass" : "/raid list")
-                .replaceAll("%raid.location%", raid.raidBossLocation().name())
-                .replaceAll("%raid.location.id%", raid.raidBossLocation().id())
-                .replaceAll("%boss.form%", raid.raidBossPokemon().getForm().getName());
-    }
-
-    public static String parse(String message, Boss boss) {
-        message = parse(message);
-        message = message
-                .replaceAll("%boss%", boss.bossId())
-                .replaceAll("%boss.species%", boss.pokemonDetails().species().getName())
-                .replaceAll("%boss.level%", String.valueOf(boss.pokemonDetails().level()))
-                .replaceAll("%boss.minimum_level%", String.valueOf(boss.raidDetails().minimumLevel()))
-                .replaceAll("%boss.maximum_level%", String.valueOf(boss.raidDetails().maximumLevel()))
-                .replaceAll("%boss.name%", boss.displayName());
-
-        return message;
-    }
-
-    public static String parse(String message, Raid raid, ServerPlayerEntity player, int damage, int place) {
-        message = parse(message, raid);
-        message = message
-                .replaceAll("%raid.player.place%", String.valueOf(place))
-                .replaceAll("%place_suffix%", (String.valueOf(place).endsWith("1") ? "st" : (String.valueOf(place).endsWith("2") ? "nd" : (String.valueOf(place).endsWith("3") ? "rd" : "th"))))
-                .replaceAll("%raid.player%", player.getName().getString())
-                .replaceAll("%raid.player.damage%", String.valueOf(damage));
-
-        return message;
-    }
-
-    public static String parse(String message, Raid raid, GameProfile player, int damage, int place) {
-        message = parse(message, raid);
-        message = message
-                .replaceAll("%raid.player.place%", String.valueOf(place))
-                .replaceAll("%place_suffix%", (String.valueOf(place).endsWith("1") ? "st" : (String.valueOf(place).endsWith("2") ? "nd" : (String.valueOf(place).endsWith("3") ? "rd" : "th"))))
-                .replaceAll("%raid.player%", player.getName())
-                .replaceAll("%raid.player.damage%", String.valueOf(damage));
-
-        return message;
-    }
-
-    public static String spaceReplace(String text, String placeholder, boolean pass, String replacement) {
-        if (text.contains(placeholder + " ")) {
-            if (pass) {
-                text = text.replaceAll(placeholder, replacement);
-            } else {
-                text = text.substring(0, text.indexOf(placeholder + " ")).concat(text.substring(text.indexOf(placeholder + " ") + (placeholder + " ").length()));
-            }
-        }
-        if (text.contains(" " + placeholder)) {
-            if (pass) {
-                text = text.replaceAll(placeholder, replacement);
-            } else {
-                text = text.substring(0, text.indexOf(" " + placeholder)).concat(text.substring(text.indexOf(" " + placeholder) + (" " + placeholder).length()));
-            }
-        }
+        if (parseContext.getRaid() != null) text = parse(text, parseContext.getRaid());
+        Boss boss = parseContext.getBoss();
+        if (boss == null && parseContext.getRaid() != null) boss = parseContext.getRaid().boss;
+        if (boss != null) text = parse(text, parseContext.getRaid(), boss, parseContext.prioritizeRaid());
+        Category category = parseContext.getCategory();
+        if (category == null && parseContext.getRaid() != null) category = parseContext.getRaid().category;
+        if (category == null && boss != null) category = Category.getCategory(boss.categoryId);
+        if (category != null) text = parse(text, category);
+        if (parseContext.getPlayer() != null) text = parse(text, parseContext.getPlayer());
+        if (parseContext.getRaidHistory() != null) text = parse(text, parseContext.getRaidHistory());
+        if (parseContext.getPlayerRaidData() != null) text = parse(text, parseContext.getPlayerRaidData());
+        CategoryModifier modifier = parseContext.getModifier();
+        if (modifier == null && parseContext.getRaid() != null) modifier = parseContext.getRaid().modifier;
+        if (modifier != null) text = parse(text, modifier);
         return text;
     }
 
-    public static String hms(long rawTime) {
-        if (rawTime < 0) {
-            rawTime = 0;
+    public static String parse(String text) {
+        Matcher matcher = pattern.matcher(text);
+        StringBuilder result = new StringBuilder();
+
+        while (matcher.find()) {
+            String content = matcher.group(1);
+
+            String[] parts = content.split(" ");
+            String id = parts[0];
+
+            List<String> args = Arrays.asList(parts).subList(1, parts.length);
+
+            for (ServerPlaceholder placeholder : serverPlaceholders) {
+                if (placeholder.id().contains(id)) {
+                    String replacement = placeholder.handle(args).string;
+                    matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
+                    break;
+                }
+            }
         }
+
+        matcher.appendTail(result);
+
+        return result.toString();
+    }
+
+    public static String parse(String text, Raid raid) {
+        Matcher matcher = pattern.matcher(text);
+        StringBuilder result = new StringBuilder();
+
+        while (matcher.find()) {
+            String content = matcher.group(1);
+
+            String[] parts = content.split(" ");
+            String id = parts[0];
+
+            List<String> args = Arrays.asList(parts).subList(1, parts.length);
+
+            for (RaidPlaceholder placeholder : raidPlaceholders) {
+                if (placeholder.id().contains(id)) {
+                    String replacement = placeholder.handle(raid, args).string;
+                    matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
+                    break;
+                }
+            }
+        }
+
+        matcher.appendTail(result);
+
+        return result.toString();
+    }
+
+    // TODO: Create a placeholder type!
+    public static String parse(String text, Category category) {
+        return text
+                .replace("%category%", category.categoryName)
+                .replace("%category.id%", category.categoryId)
+                .replace("%category.pass_required%", String.valueOf(category.raidDetails.requirePass))
+                .replace("%category.min_players%", String.valueOf(category.raidDetails.minPlayerCount))
+                .replace("%category.max_players%", String.valueOf(category.raidDetails.maxPlayerCount));
+    }
+
+    public static String parse(String text, @Nullable Raid raid, Boss boss, boolean prioritizeRaid) {
+        Matcher matcher = pattern.matcher(text);
+        StringBuilder result = new StringBuilder();
+
+        while (matcher.find()) {
+            String content = matcher.group(1);
+
+            String[] parts = content.split(" ");
+            String id = parts[0];
+
+            List<String> args = Arrays.asList(parts).subList(1, parts.length);
+
+            for (BossPlaceholder placeholder : bossPlaceholders) {
+                if (placeholder.id().contains(id)) {
+                    String replacement = placeholder.handle(raid, boss, prioritizeRaid, args).string;
+                    matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
+                    break;
+                }
+            }
+        }
+
+        matcher.appendTail(result);
+
+        return result.toString();
+    }
+
+    public static String parse(String text, CategoryModifier modifier) {
+        Matcher matcher = pattern.matcher(text);
+        StringBuilder result = new StringBuilder();
+
+        while (matcher.find()) {
+            String content = matcher.group(1);
+
+            String[] parts = content.split(" ");
+            String id = parts[0];
+
+            List<String> args = Arrays.asList(parts).subList(1, parts.length);
+
+            for (CategoryModifierPlaceholder placeholder : categoryModifierPlaceholders) {
+                if (placeholder.id().contains(id)) {
+                    String replacement = placeholder.handle(modifier, args).string;
+                    matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
+                    break;
+                }
+            }
+        }
+
+        matcher.appendTail(result);
+
+        return result.toString();
+    }
+
+    public static String parse(String text, ServerPlayerEntity player) {
+        return text.replaceAll("%player%", player.getNameForScoreboard());
+    }
+
+    public static String parse(String text, RaidHistory raidHistory) {
+        Matcher matcher = pattern.matcher(text);
+        StringBuilder result = new StringBuilder();
+
+        while (matcher.find()) {
+            String content = matcher.group(1);
+
+            String[] parts = content.split(" ");
+            String id = parts[0];
+
+            List<String> args = Arrays.asList(parts).subList(1, parts.length);
+
+            for (RaidHistoryPlaceholder placeholder : raidHistoryPlaceholders) {
+                if (placeholder.id().contains(id)) {
+                    String replacement = placeholder.handle(raidHistory, args).string;
+                    matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
+                    break;
+                }
+            }
+        }
+
+        matcher.appendTail(result);
+
+        return result.toString();
+    }
+
+    // TODO: Create a placeholder type!
+    public static String parse(String text, PlayerRaidData playerRaidData) {
+        return text
+                .replace("%player_uuid%", playerRaidData.uuid)
+                .replace("%player%", playerRaidData.username)
+                .replace("%placement%", String.valueOf(playerRaidData.leaderboardPlacement))
+                .replace("%damage%", String.valueOf(playerRaidData.totalDamage))
+                .replace("%left_raid%", String.valueOf(playerRaidData.leftRaid))
+                .replace("%battle_count%", String.valueOf(playerRaidData.battleAttempts.size()))
+                .replace("%caught_boss%", String.valueOf(playerRaidData.catchResult.caught))
+                .replace("%caught_species%", playerRaidData.catchResult.species)
+                .replace("%caught_form%", playerRaidData.catchResult.formId)
+                .replace("%caught_hp_iv%", String.valueOf(playerRaidData.catchResult.ivs.get(Stats.HP)))
+                .replace("%caught_attack_iv%", String.valueOf(playerRaidData.catchResult.ivs.get(Stats.ATTACK)))
+                .replace("%caught_defence_iv%", String.valueOf(playerRaidData.catchResult.ivs.get(Stats.DEFENCE)))
+                .replace("%caught_special_attack_iv%", String.valueOf(playerRaidData.catchResult.ivs.get(Stats.SPECIAL_ATTACK)))
+                .replace("%caught_special_defence_iv%", String.valueOf(playerRaidData.catchResult.ivs.get(Stats.SPECIAL_DEFENCE)))
+                .replace("%caught_speed_iv%", String.valueOf(playerRaidData.catchResult.ivs.get(Stats.SPEED)))
+                .replace("%caught_hp_ev%", String.valueOf(playerRaidData.catchResult.evs.get(Stats.HP)))
+                .replace("%caught_attack_ev%", String.valueOf(playerRaidData.catchResult.evs.get(Stats.ATTACK)))
+                .replace("%caught_defence_ev%", String.valueOf(playerRaidData.catchResult.evs.get(Stats.DEFENCE)))
+                .replace("%caught_special_attack_ev%", String.valueOf(playerRaidData.catchResult.evs.get(Stats.SPECIAL_ATTACK)))
+                .replace("%caught_special_defence_ev%", String.valueOf(playerRaidData.catchResult.evs.get(Stats.SPECIAL_DEFENCE)))
+                .replace("%caught_speed_ev%", String.valueOf(playerRaidData.catchResult.evs.get(Stats.SPEED)))
+                .replace("%caught_shiny%", String.valueOf(playerRaidData.catchResult.shiny));
+    }
+
+    // This is the only parse that's out in the wild, damage parsing. Todo: Add damage to ParsingContext
+    public static String parse(String text, ServerPlayerEntity player, int damage, int place) {
+        GameProfile profile = player.getGameProfile();
+        return parse(text, profile, damage, place);
+    }
+
+    public static String parse(String text, GameProfile player, int damage, int place) {
+        return text
+                .replace("%place%", String.valueOf(place))
+                .replace("%ordinal%", (String.valueOf(place).endsWith("1") ? "st" : (String.valueOf(place).endsWith("2") ? "nd" : (String.valueOf(place).endsWith("3") ? "rd" : "th"))))
+                .replace("%player%", player.getName())
+                .replace("%damage%", String.valueOf(damage));
+    }
+
+    public static String hms(long rawTime) {
+        if (rawTime < 0) rawTime = 0;
         long hours;
         long minutes;
         long seconds = rawTime;
@@ -131,9 +279,7 @@ public class TextUtils {
         seconds = seconds % 60;
         temp = temp - seconds;
         minutes = temp / 60;
-        if (minutes > 0) {
-            output = output.concat(minutes + "m ");
-        }
+        if (minutes > 0) output = output.concat(minutes + "m ");
         output = output.concat(seconds + "s");
 
         return output;

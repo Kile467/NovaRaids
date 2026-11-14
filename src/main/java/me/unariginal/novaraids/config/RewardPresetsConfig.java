@@ -1,82 +1,67 @@
 package me.unariginal.novaraids.config;
 
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
-import me.unariginal.novaraids.NovaRaids;
-import me.unariginal.novaraids.data.rewards.Reward;
-import net.fabricmc.loader.api.FabricLoader;
+import com.cobblemon.mod.common.Cobblemon;
+import com.cobblemon.mod.common.api.pokemon.PokemonProperties;
+import com.cobblemon.mod.common.api.storage.party.PlayerPartyStore;
+import com.cobblemon.mod.common.pokemon.*;
+import me.unariginal.novaraids.data.categories.bosses.Boss;
+import me.unariginal.novaraids.placeholders.ParseContext;
+import net.minecraft.item.ItemStack;
+import net.minecraft.server.command.CommandManager;
+import net.minecraft.server.command.ServerCommandSource;
+import net.minecraft.server.network.ServerPlayerEntity;
 
 import java.io.*;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
+
+import static me.unariginal.novaraids.NovaRaids.logError;
+import static me.unariginal.novaraids.utils.TextUtils.parse;
 
 public class RewardPresetsConfig {
-    public List<Reward> rewards = new ArrayList<>();
+    public static class Reward {
+        public transient String rewardId;
+        public final transient UUID uuid = UUID.randomUUID();
 
-    public RewardPresetsConfig() {
-        try {
-            loadConfig();
-        } catch (IOException | NullPointerException | UnsupportedOperationException e) {
-            NovaRaids.LOADED = false;
-            NovaRaids.LOGGER.error("[NovaRaids] Failed to load reward presets file.", e);
+        public void grantReward(ServerPlayerEntity player, Boss boss) {}
+    }
+
+    public static class ItemReward extends Reward {
+        public ItemStack item;
+        public int minCount;
+        public int maxCount;
+
+        @Override
+        public void grantReward(ServerPlayerEntity player, Boss boss) {
+            ItemStack reward = item.copyWithCount(new Random().nextInt(minCount, maxCount + 1));
+            player.getInventory().offerOrDrop(reward);
         }
     }
 
-    public void loadConfig() throws IOException, NullPointerException, UnsupportedOperationException {
-        File rootFolder = FabricLoader.getInstance().getConfigDir().resolve("NovaRaids").toFile();
-        if (!rootFolder.exists()) {
-            rootFolder.mkdirs();
-        }
+    public static class CommandReward extends Reward {
+        public List<String> commands;
 
-        File file = FabricLoader.getInstance().getConfigDir().resolve("NovaRaids/reward_presets.json").toFile();
-        JsonObject config = new JsonObject();
-        if (file.exists()) config = JsonParser.parseReader(new FileReader(file)).getAsJsonObject();
-
-        if (config.keySet().isEmpty()) {
-            InputStream stream = NovaRaids.class.getResourceAsStream("/raid_config_files/reward_presets.json");
-            assert stream != null;
-            OutputStream out = new FileOutputStream(file);
-
-            byte[] buffer = new byte[1024];
-            int length;
-            while ((length = stream.read(buffer)) > 0) {
-                out.write(buffer, 0, length);
+        @Override
+        public void grantReward(ServerPlayerEntity player, Boss boss) {
+            CommandManager cmdManager = Objects.requireNonNull(player.getServer()).getCommandManager();
+            ServerCommandSource source = player.getServer().getCommandSource();
+            for (String command : commands) {
+                cmdManager.executeWithPrefix(source, parse(command.replaceAll("%player%", player.getNameForScoreboard()), ParseContext.builder().player(player).boss(boss).build()));
             }
-
-            stream.close();
-            out.close();
-
-            config = JsonParser.parseReader(new FileReader(file)).getAsJsonObject();
         }
-
-        for (String key : config.keySet()) {
-            JsonObject rewardObject = config.getAsJsonObject(key);
-            Reward reward = ConfigHelper.getReward(rewardObject, key);
-            if (reward == null) continue;
-            rewards.add(reward);
-        }
-
-        for (Reward reward : rewards) {
-            config.remove(reward.name());
-            config.add(reward.name(), reward.rewardObject());
-        }
-
-        file.delete();
-        file.createNewFile();
-        Gson gson = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
-        Writer writer = new FileWriter(file);
-        gson.toJson(config, writer);
-        writer.close();
     }
 
-    public Reward getReward(String id) {
-        for (Reward reward : rewards) {
-            if (reward.name().equalsIgnoreCase(id)) {
-                return reward;
-            }
+    public static class PokemonReward extends Reward {
+        public PokemonProperties pokemon;
+
+        @Override
+        public void grantReward(ServerPlayerEntity player, Boss boss) {
+            PlayerPartyStore party = Cobblemon.INSTANCE.getStorage().getParty(player);
+            if (pokemon != null) party.add(pokemon.create(player));
+            else logError("Pokemon was null!");
         }
-        return null;
+    }
+
+    public static Reward getReward(String id) {
+        return ConfigManager.REWARD_PRESETS.get(id);
     }
 }

@@ -6,8 +6,8 @@ import com.cobblemon.mod.common.battles.BattleSide;
 import com.cobblemon.mod.common.battles.pokemon.BattlePokemon;
 import com.cobblemon.mod.common.battles.runner.ShowdownService;
 import com.cobblemon.mod.common.entity.pokemon.PokemonEntity;
-import me.unariginal.novaraids.NovaRaids;
-import me.unariginal.novaraids.managers.Raid;
+import me.unariginal.novaraids.raid.Raid;
+import me.unariginal.novaraids.raid.RaidPhase;
 import org.jetbrains.annotations.NotNull;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -17,6 +17,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.List;
 import java.util.UUID;
+
+import static me.unariginal.novaraids.raid.RaidManager.activeRaids;
 
 @Mixin(value = PokemonBattle.class, remap = false)
 public abstract class GimmickActionMixin {
@@ -60,12 +62,12 @@ public abstract class GimmickActionMixin {
         if (battlePokemon == null) return;
         PokemonEntity pokemonEntity = battlePokemon.getEntity();
         if (pokemonEntity == null) return;
-        for (Raid raid : NovaRaids.INSTANCE.activeRaids().values()) {
-            if (raid.stage() != 2) continue;
-            if (raid.getClones().containsKey(pokemonEntity)) {
-                String gimmick = raid.baseGimmick();
-                if (raid.bossInfo().rerollGimmickEachBattle()) {
-                    gimmick = raid.bossInfo().pokemonDetails().getGimmick();
+        for (Raid raid : activeRaids.values()) {
+            if (raid.phase != RaidPhase.FIGHT) continue;
+            if (raid.clones.containsKey(pokemonEntity)) {
+                String gimmick = raid.baseGimmick;
+                if (raid.boss.bossDetails.rerollGimmickEachBattle) {
+                    gimmick = raid.boss.pokemonDetails.getRandomGimmick();
                 }
 
                 if (gimmick != null && !gimmick.isEmpty()) {

@@ -1,0 +1,285 @@
+{
+  "boss_id": "example_eevee",
+  "global_weight": 15.0,
+  "category_weight": 10.0,
+  "pokemon_details": {
+    "species": "eevee",
+    "level": 50,
+    "features": [
+      {
+        "feature": "",
+        "weight": 1.0
+      }
+    ],
+    "abilities": [
+      {
+        "ability": "adaptability",
+        "weight": 4.5
+      },
+      {
+        "ability": "runaway",
+        "weight": 13.0
+      }
+    ],
+    "natures": [
+      {
+        "nature": "calm",
+        "weight": 5.0
+      },
+      {
+        "nature": "jolly",
+        "weight": 1.2
+      }
+    ],
+    "genders": [
+      {
+        "gender": "FEMALE",
+        "weight": 12.5
+      },
+      {
+        "gender": "MALE",
+        "weight": 87.5
+      }
+    ],
+    "gimmicks": [],
+    "shiny": false,
+    "tera_type": "random",
+    "gmax_factor": false,
+    "dynamax_level": 0,
+    "scale": 5.0,
+    "held_item": {
+      "id": "cobblemon:leftovers",
+      "count": 1
+    },
+    "moves": [
+      "bite",
+      "tackle",
+      "endure",
+      "doubleedge"
+    ],
+    "friendship": 50,
+    "ivs": {
+      "Base": {
+        "cobblemon:hp": 31,
+        "cobblemon:attack": 31,
+        "cobblemon:defence": 31,
+        "cobblemon:special_attack": 31,
+        "cobblemon:special_defence": 31,
+        "cobblemon:speed": 31
+      },
+      "HyperTrained": {}
+    },
+    "evs": {
+      "cobblemon:hp": 0,
+      "cobblemon:attack": 0,
+      "cobblemon:defence": 0,
+      "cobblemon:special_attack": 0,
+      "cobblemon:special_defence": 0,
+      "cobblemon:speed": 0
+    }
+  },
+  "boss_details": {
+    "display_name": "Really Big Eevee",
+    "base_health": 1000,
+    "health_increase_per_player": 500,
+    "apply_glowing": true,
+    "glow_color": "white",
+    "ai_skill_level": 3,
+    "reroll_features_each_battle": false,
+    "reroll_gimmick_each_battle": true,
+    "locations": [
+      {
+        "location": "example_location",
+        "weight": 50.0
+      }
+    ]
+  },
+  "item_settings": {
+    "allow_global_pokeballs": true,
+    "allow_category_pokeballs": true,
+    "raid_balls_enabled": true,
+    "boss_voucher": {
+      "voucher_item": {
+        "id": "minecraft:feather",
+        "count": 1
+      },
+      "voucher_name": "%boss_name% Raid Voucher",
+      "voucher_lore": []
+    },
+    "boss_pass": {
+      "pass_item": {
+        "id": "minecraft:paper",
+        "count": 1
+      },
+      "pass_name": "%boss_name% Raid Pass",
+      "pass_lore": []
+    },
+    "raid_balls": {
+      "eevee_premier": {
+        "pokeball_item": {
+          "id": "cobblemon:premier_ball",
+          "count": 1
+        },
+        "pokeball_name": "<red>Eevee Premier Raid Pokeball",
+        "pokeball_lore": [
+          "<gray>Use this to try and catch %boss_name%!"
+        ]
+      },
+      "eevee_ultra": {
+        "pokeball_item": {
+          "id": "cobblemon:ultra_ball",
+          "count": 1
+        },
+        "pokeball_name": "<red>Eevee Ultra Raid Pokeball",
+        "pokeball_lore": [
+          "<gray>Use this to try and catch %boss_name%!"
+        ]
+      }
+    }
+  },
+  "raid_details": {
+    "minimum_level": 25,
+    "maximum_level": 100,
+    "setup_phase_time": 30,
+    "fight_phase_time": 600,
+    "do_catch_phase": true,
+    "pre_catch_phase_time": 30,
+    "catch_phase_time": 180,
+    "minimum_party_size": 1,
+    "maximum_party_size": 6,
+    "heal_party_on_challenge": false,
+    "contraband": {
+      "banned_pokemon": [],
+      "banned_moves": [],
+      "banned_abilities": [],
+      "banned_held_items": [],
+      "banned_bag_items": []
+    },
+    "bossbars": {
+      "setup": "setup_phase_example",
+      "fight": "fight_phase_example",
+      "pre_catch": "pre_catch_phase_example",
+      "catch": "catch_phase_example"
+    },
+    "events": {
+      "boss_damaged": {
+        "pre": "default",
+        "post": "default"
+      },
+      "boss_defeated": {
+        "pre": "default",
+        "post": "default"
+      },
+      "raid_start": {
+        "pre": "default",
+        "post": "default"
+      },
+      "raid_end": {
+        "pre": "default",
+        "post": "default"
+      },
+      "raid_lost": {
+        "pre": "default",
+        "post": "default"
+      },
+      "setup_phase": {
+        "pre": "default",
+        "post": "default"
+      },
+      "fight_phase": {
+        "pre": "default",
+        "post": "default"
+      },
+      "catch_warning_phase": {
+        "pre": "default",
+        "post": "default"
+      },
+      "catch_phase": {
+        "pre": "default",
+        "post": "default"
+      }
+    },
+    "override_category_distribution": false,
+    "reward_distribution": [
+      {
+        "places": [
+          {
+            "place": "1",
+            "require_damage": true,
+            "allow_other_rewards": false,
+            "override_category_reward": true
+          }
+        ],
+        "rewards": {
+          "allow_duplicates": true,
+          "min_rolls": 1,
+          "max_rolls": 5,
+          "reward_pools": [
+            {
+              "type": "unset",
+              "weight": 5.0,
+              "pool": {
+                "allow_duplicates": true,
+                "min_rolls": 1,
+                "max_rolls": 5,
+                "rewards": [
+                  {
+                    "type": "unset",
+                    "weight": 25.0,
+                    "reward": {
+                      "type": "item",
+                      "item": {
+                        "id": "minecraft:dirt",
+                        "count": 1
+                      },
+                      "min_count": 1,
+                      "max_count": 16
+                    }
+                  },
+                  {
+                    "type": "unset",
+                    "weight": 50.0,
+                    "reward": {
+                      "type": "command",
+                      "commands": [
+                        "say Command 1: %player% won the reward!",
+                        "say Command 2: Idk just for fun"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "catch_settings": {
+    "species_override": "eevee",
+    "level_override": 1,
+    "keep_features": false,
+    "features_override": "",
+    "keep_scale": false,
+    "keep_held_item": false,
+    "randomize_ivs": true,
+    "keep_evs": false,
+    "randomize_gender": true,
+    "randomize_nature": true,
+    "randomize_ability": true,
+    "reset_moves": true,
+    "moves_override": [],
+    "friendship_override": 50,
+    "randomize_tera_type": true,
+    "reset_gmax_factor": true,
+    "dynamax_level_override": 0,
+    "places": [
+      {
+        "place": "participating",
+        "require_damage": true,
+        "shiny_chance": 8192.0,
+        "min_perfect_ivs": 0
+      }
+    ]
+  }
+}

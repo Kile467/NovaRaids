@@ -1,0 +1,132 @@
+{
+  "category_id": "common",
+  "category_name": "Common",
+  "no_modifier_weight": 99,
+  "raid_details": {
+    "require_pass": false,
+    "min_player_count": 1,
+    "max_player_count": -1,
+    "contraband": {
+      "banned_pokemon": [],
+      "banned_moves": [],
+      "banned_abilities": [],
+      "banned_held_items": [],
+      "banned_bag_items": []
+    },
+    "bossbars": {
+      "setup": "setup_phase_example",
+      "fight": "fight_phase_example",
+      "pre_catch": "pre_catch_phase_example",
+      "catch": "catch_phase_example"
+    }
+  },
+  "item_settings": {
+    "raid_balls_enabled": true,
+    "category_choice_voucher": {
+      "voucher_item": {
+        "id": "minecraft:feather",
+        "count": 1
+      },
+      "voucher_name": "%category% Raid Voucher",
+      "voucher_lore": []
+    },
+    "category_random_voucher": {
+      "voucher_item": {
+        "id": "minecraft:feather",
+        "count": 1
+      },
+      "voucher_name": "Random %category% Raid Voucher",
+      "voucher_lore": [],
+      "voucher_data": {}
+    },
+    "category_pass": {
+      "pass_item": {
+        "id": "minecraft:paper",
+        "count": 1
+      },
+      "pass_name": "%category% Raid Pass",
+      "pass_lore": []
+    },
+    "raid_balls": {
+      "common_premier": {
+        "pokeball_item": {
+          "id": "cobblemon:premier_ball",
+          "count": 1
+        },
+        "pokeball_name": "<red>%category% Premier Raid Pokeball",
+        "pokeball_lore": ["<gray>Use this to try and catch %category% bosses!"]
+      },
+      "common_ultra": {
+        "pokeball_item": {
+          "id": "cobblemon:ultra_ball",
+          "count": 1
+        },
+        "pokeball_name": "<red>%category% Ultra Raid Pokeball",
+        "pokeball_lore": ["<gray>Use this to try and catch %category% bosses!"]
+      }
+    }
+  },
+  "reward_distribution": [
+    {
+      "places": [
+        {
+          "place": "1",
+          "require_damage": true,
+          "allow_other_rewards": false
+        }
+      ],
+      "rewards": {
+        "allow_duplicates": true,
+        "min_rolls": 1,
+        "max_rolls": 5,
+        "reward_pools": [
+          {
+            "type": "preset",
+            "weight": 10.0,
+            "pool_preset": "pool_example_2"
+          },
+          {
+            "type": "unset",
+            "weight": 5.0,
+            "pool": {
+              "allow_duplicates": true,
+              "min_rolls": 1,
+              "max_rolls": 5,
+              "rewards": [
+                {
+                  "type": "unset",
+                  "weight": 25.0,
+                  "reward": {
+                    "type": "item",
+                    "item": {
+                      "id": "minecraft:dirt",
+                      "count": 1
+                    },
+                    "min_count": 1,
+                    "max_count": 16
+                  }
+                },
+                {
+                  "type": "unset",
+                  "weight": 50.0,
+                  "reward": {
+                    "type": "command",
+                    "commands": [
+                      "say Command 1: %player% won the reward!",
+                      "say Command 2: Idk just for fun"
+                    ]
+                  }
+                },
+                {
+                  "type": "preset",
+                  "weight": 5.0,
+                  "reward_preset": "pokemon_reward_example"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

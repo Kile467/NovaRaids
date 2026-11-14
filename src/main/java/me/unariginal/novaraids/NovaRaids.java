@@ -1,15 +1,17 @@
 package me.unariginal.novaraids;
 
 import me.unariginal.novaraids.commands.RaidCommands;
-import me.unariginal.novaraids.config.*;
+import me.unariginal.novaraids.config.PersistentQueue;
 import me.unariginal.novaraids.data.QueueItem;
-import me.unariginal.novaraids.managers.BossBarHandler;
-import me.unariginal.novaraids.managers.EventManager;
-import me.unariginal.novaraids.managers.Raid;
-import me.unariginal.novaraids.managers.TickManager;
-import me.unariginal.novaraids.utils.EntityDiscardScheduler;
-import me.unariginal.novaraids.utils.WebhookHandler;
+import me.unariginal.novaraids.handlers.ScheduledBossbarHandler;
+import me.unariginal.novaraids.handlers.CobblemonEventHandler;
+import me.unariginal.novaraids.raid.Raid;
+import me.unariginal.novaraids.handlers.TickEventHandler;
+import me.unariginal.novaraids.handlers.WebhookHandler;
+import me.unariginal.novaraids.raid.RaidManager;
+import me.unariginal.novaraids.utils.Threading;
 import net.fabricmc.api.ModInitializer;
+import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.kyori.adventure.platform.fabric.FabricServerAudiences;
@@ -19,31 +21,18 @@ import org.slf4j.LoggerFactory;
 
 import java.util.*;
 
+import static me.unariginal.novaraids.config.ConfigManager.*;
+import static me.unariginal.novaraids.placeholders.PlaceholderManager.registerPlaceholders;
+import static me.unariginal.novaraids.raid.RaidManager.activeRaids;
+
 public class NovaRaids implements ModInitializer {
     public static final String MOD_ID = "novaraids";
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
     public static NovaRaids INSTANCE;
-    public static boolean LOADED = true;
 
-    private BossBarHandler bossBarHandler;
+    public MinecraftServer server;
+    public FabricServerAudiences audience;
 
-    private Config config;
-    private LocationsConfig locationsConfig;
-    private BossbarsConfig bossbarsConfig;
-    private MessagesConfig messagesConfig;
-    private SchedulesConfig schedulesConfig;
-    private RewardPresetsConfig rewardPresetsConfig;
-    private RewardPoolsConfig rewardPoolsConfig;
-    private BossesConfig bossesConfig;
-    private GuisConfig guisConfig;
-
-    public boolean debug = false;
-    private MinecraftServer server;
-    private FabricServerAudiences audience;
-    private RaidCommands raidCommands;
-
-    private final Map<Integer, Raid> activeRaids = new HashMap<>();
-    private final Queue<QueueItem> queuedRaids = new LinkedList<>();
     public List<UUID> ignorePlayerVisibility = new ArrayList<>();
     public List<UUID> ignorePokemonVisibility = new ArrayList<>();
 
@@ -51,186 +40,81 @@ public class NovaRaids implements ModInitializer {
     public void onInitialize() {
         INSTANCE = this;
 
-        raidCommands = new RaidCommands();
+        CommandRegistrationCallback.EVENT.register(RaidCommands::register);
 
-        // Set up event handlers and configuration at server load
-        ServerLifecycleEvents.SERVER_STARTED.register(server -> {
+        ServerLifecycleEvents.SERVER_STARTING.register(server -> {
             this.server = server;
             this.audience = FabricServerAudiences.of(server);
 
             reloadConfig();
-            if (LOADED) {
-                EventManager.initialiseEvents();
-                bossBarHandler = new BossBarHandler();
-            } else {
-                LOGGER.error("Config did not load properly!");
+            loadQueue();
+
+            registerPlaceholders();
+        });
+
+        ServerLifecycleEvents.SERVER_STARTED.register(server -> {
+            CobblemonEventHandler.register();
+            new ScheduledBossbarHandler();
+
+            if (PERSISTENT_QUEUE.queue != null) {
+                while (!PERSISTENT_QUEUE.queue.isEmpty()) {
+                    PersistentQueue.QueueItemData queueItemData = PERSISTENT_QUEUE.queue.poll();
+                    if (!RaidManager.queueRaid(queueItemData)) {
+                        logInfo("Failed to queue raid from file, boss " + queueItemData.boss + " is null!");
+                    }
+                }
             }
         });
 
         // Server tick loop
-        ServerTickEvents.END_SERVER_TICK.register(server -> {
-            if (LOADED) {
-                try {
-                    TickManager.updateWebhooks();
-                    TickManager.fixBossPositions();
-                    TickManager.handleDefeatedBosses();
-                    TickManager.executeTasks();
-                    EntityDiscardScheduler.tick();
-                    TickManager.fixPlayerPositions();
-                    TickManager.fixPlayerPokemon();
-                    TickManager.scheduledRaids();
-                } catch (ConcurrentModificationException e) {
-                    logInfo("Suppressing concurrent modification exception!");
-                }
-                for (Raid raid : activeRaids.values()) {
-                    raid.removePlayers();
-                }
-            }
-        });
+        ServerTickEvents.END_SERVER_TICK.register(TickEventHandler::register);
 
         // Clean up at server stop
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
-            if (LOADED) {
-                for (QueueItem queue : queuedRaids) {
-                    queue.cancelItem();
-                }
-                queuedRaids.clear();
-
-                for (Raid raid : activeRaids.values()) {
-                    raid.stop();
-                }
-                // TODO: Save current raid, write queue to file
+            for (Raid raid : activeRaids.values()) {
+                PersistentQueue.QueueItemData queueItemData = new PersistentQueue.QueueItemData();
+                queueItemData.boss = raid.boss.bossId;
+                queueItemData.startingPlayerUuid = raid.startingPlayer == null ? null : raid.startingPlayer.toString();
+                queueItemData.startingItem = raid.startingItem;
+                queueItemData.requirePass = raid.requiresPass;
+                PERSISTENT_QUEUE.queue.add(queueItemData);
             }
+
+            for (QueueItem queue : RaidManager.queuedRaids) {
+                PersistentQueue.QueueItemData queueItemData = new PersistentQueue.QueueItemData();
+                queueItemData.boss = queue.boss.bossId;
+                queueItemData.startingPlayerUuid = queue.startingPlayerUuid == null ? null : queue.startingPlayerUuid.toString();
+                queueItemData.startingItem = queue.startingItem;
+                queueItemData.requirePass = queue.requirePass;
+                PERSISTENT_QUEUE.queue.add(queueItemData);
+                queue.cancelItem();
+            }
+            RaidManager.queuedRaids.clear();
+
+            Collection<UUID> raidIds = new ArrayList<>(RaidManager.raidIds);
+            for (UUID uuid : raidIds) {
+                RaidManager.stopRaid(uuid);
+            }
+
+            saveQueue();
+
+            Threading.shutdown();
+            if (WebhookHandler.webhook != null) WebhookHandler.webhook.close();
         });
     }
 
-    public Config config() {
-        return config;
-    }
-    public LocationsConfig locationsConfig() {
-        return locationsConfig;
-    }
-    public BossbarsConfig bossbarsConfig() {
-        return bossbarsConfig;
-    }
-    public MessagesConfig messagesConfig() {
-        return messagesConfig;
-    }
-    public SchedulesConfig schedulesConfig() {
-        return schedulesConfig;
-    }
-    public RewardPresetsConfig rewardPresetsConfig() {
-        return rewardPresetsConfig;
-    }
-    public RewardPoolsConfig rewardPoolsConfig() {
-        return rewardPoolsConfig;
-    }
-    public BossesConfig bossesConfig() {
-        return bossesConfig;
-    }
-    public GuisConfig guisConfig() {
-        return guisConfig;
-    }
-
-    public void reloadConfig() {
-        config = new Config();
-        locationsConfig = new LocationsConfig();
-        bossbarsConfig = new BossbarsConfig();
-        messagesConfig = new MessagesConfig();
-        schedulesConfig = new SchedulesConfig();
-        rewardPresetsConfig = new RewardPresetsConfig();
-        rewardPoolsConfig = new RewardPoolsConfig();
-        bossesConfig = new BossesConfig();
-        guisConfig = new GuisConfig();
-        if (WebhookHandler.webhookToggle) {
+    public static void reloadConfig() {
+        load();
+        if (INSTANCE.server != null && CONFIG.discordWebhook.enabled) {
             WebhookHandler.connectWebhook();
         }
     }
 
-    public MinecraftServer server() {
-        return server;
+    public static void logInfo(String message) {
+        if (CONFIG.debug) LOGGER.info("[NovaRaids] {}", message);
     }
 
-    public FabricServerAudiences audience() {
-        return audience;
-    }
-
-    public Logger logger() {
-        return LOGGER;
-    }
-
-    public void logInfo(String message) {
-        if (debug) {
-            logger().info("[NovaRaids] {}", message);
-        }
-    }
-
-    public void logError(String message) {
-        logger().error("[NovaRaids] {}", message);
-    }
-
-    public Map<Integer, Raid> activeRaids() {
-        return activeRaids;
-    }
-
-    public Queue<QueueItem> queuedRaids() {
-        return queuedRaids;
-    }
-
-    public void addQueueItem(QueueItem item) {
-        if (!queuedRaids.contains(item)) {
-            queuedRaids.add(item);
-        } else {
-            logInfo("Queue item already exists!");
-        }
-    }
-
-    public void initNextRaid() {
-        if (config.useQueueSystem) {
-            if (!queuedRaids.isEmpty()) {
-                queuedRaids.remove().startRaid();
-            }
-        }
-    }
-
-    public RaidCommands raidCommands() {
-        return raidCommands;
-    }
-
-    public int getRaidId(Raid raid) {
-        for (int key : activeRaids.keySet()) {
-            if (activeRaids.get(key).uuid().equals(raid.uuid())) {
-                return key;
-            }
-        }
-        return -1;
-    }
-
-    public void addRaid(Raid raid) {
-        if (getRaidId(raid) == -1) {
-            int next_id = fixRaidIds();
-            activeRaids.put(next_id, raid);
-        }
-    }
-
-    public void removeRaid(Raid raid) {
-        int id = getRaidId(raid);
-        if (id != -1) {
-            activeRaids.remove(id);
-            fixRaidIds();
-        }
-    }
-
-    public int fixRaidIds() {
-        Map<Integer, Raid> newRaids = new HashMap<>();
-        int count = 1;
-        for (int key : activeRaids.keySet()) {
-            Raid raid = activeRaids.get(key);
-            newRaids.put(count, raid);
-            count++;
-        }
-        activeRaids.clear();
-        activeRaids.putAll(newRaids);
-        return count;
+    public static void logError(String message) {
+        LOGGER.error("[NovaRaids] {}", message);
     }
 }
