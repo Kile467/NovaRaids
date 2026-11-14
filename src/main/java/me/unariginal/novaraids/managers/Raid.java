@@ -21,6 +21,7 @@ import me.unariginal.novaraids.data.rewards.DistributionSection;
 import me.unariginal.novaraids.data.rewards.Place;
 import me.unariginal.novaraids.data.rewards.RewardPool;
 import me.unariginal.novaraids.utils.BanHandler;
+import me.unariginal.novaraids.utils.EntityDiscardScheduler;
 import me.unariginal.novaraids.utils.RandomUtils;
 import me.unariginal.novaraids.utils.TextUtils;
 import me.unariginal.novaraids.utils.WebhookHandler;
@@ -29,6 +30,7 @@ import net.minecraft.entity.Entity;
 import net.minecraft.entity.effect.StatusEffectInstance;
 import net.minecraft.entity.effect.StatusEffects;
 import net.minecraft.item.ItemStack;
+import net.minecraft.nbt.NbtCompound;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
@@ -112,9 +114,7 @@ public class Raid {
     public void stop() {
         stage = -1;
 
-        if (raidBossEntity != null && raidBossEntity.isAlive() && !raidBossEntity.isRemoved()) {
-            raidBossEntity.kill();
-        }
+        removeBossEntity();
 
         endBattles();
 
@@ -243,7 +243,7 @@ public class Raid {
 
         endBattles();
 
-        raidBossEntity.kill();
+        removeBossEntity();
         handleRewards();
 
         try {
@@ -525,19 +525,34 @@ public class Raid {
     }
 
     public void fixBossPosition() {
-        if (stage != -1 && stage != 0) {
-            if (raidBossEntity != null) {
-                if (raidBossEntity.getPos() != raidBossLocation.pos()) {
-                    raidBossEntity.teleport(raidBossLocation.world(), raidBossLocation.pos().x, raidBossLocation.pos().y, raidBossLocation.pos().z, null, raidBossLocation.bossFacingDirection(), 0);
-                }
+        if (stage != 1 && stage != 2) {
+            return;
+        }
+        if (raidBossEntity != null && !raidBossEntity.isRemoved()) {
+            if (raidBossEntity.getPos() != raidBossLocation.pos()) {
+                raidBossEntity.teleport(raidBossLocation.world(), raidBossLocation.pos().x, raidBossLocation.pos().y, raidBossLocation.pos().z, null, raidBossLocation.bossFacingDirection(), 0);
             }
         }
+    }
+
+    private void removeBossEntity() {
+        if (raidBossEntity == null || raidBossEntity.isRemoved()) {
+            return;
+        }
+        raidBossEntity.setInvulnerable(false);
+        if (raidBossEntity.isAlive()) {
+            raidBossEntity.kill();
+        }
+        EntityDiscardScheduler.schedule(raidBossEntity);
     }
 
     private PokemonEntity generateBossEntity() {
         ServerWorld world = raidBossLocation.world();
         Vec3d pos = raidBossLocation.pos();
         return raidBossPokemonUncatchable.sendOut(world, pos, null, entity -> {
+            NbtCompound data = entity.getPokemon().getPersistentData();
+            data.putBoolean("boss_display", true);
+            entity.getPokemon().setPersistentData$common(data);
             entity.setPersistent();
             entity.addStatusEffect(new StatusEffectInstance(StatusEffects.SLOWNESS, 999999, 9999, true, false));
             entity.setMovementSpeed(0.0f);

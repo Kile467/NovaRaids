@@ -2,6 +2,7 @@ package me.unariginal.novaraids.mixin;
 
 import com.cobblemon.mod.common.entity.pokemon.PokemonEntity;
 import com.cobblemon.mod.common.pokemon.Pokemon;
+import me.unariginal.novaraids.utils.EntityDiscardScheduler;
 import net.minecraft.entity.LivingEntity;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -19,7 +20,21 @@ public class PreventDrops {
                 if (pokemon.getPersistentData().contains("raid_entity")) {
                     if (pokemon.getPersistentData().getBoolean("raid_entity")) {
                         pokemon.removeHeldItem();
-                        pokemonEntity.teleport(pokemonEntity.getX(), -1000, pokemonEntity.getZ(), false);
+                    }
+                }
+            }
+        }
+    }
+
+    @Inject(at = {@At("RETURN")}, method = {"onDeath"})
+    public void scheduleDiscard(CallbackInfo ci) {
+        LivingEntity entity = (LivingEntity) (Object) this;
+        if (entity instanceof PokemonEntity pokemonEntity) {
+            Pokemon pokemon = pokemonEntity.getPokemon();
+            if (!pokemon.isPlayerOwned()) {
+                if (pokemon.getPersistentData().contains("raid_entity")) {
+                    if (pokemon.getPersistentData().getBoolean("raid_entity")) {
+                        EntityDiscardScheduler.schedule(pokemonEntity);
                     }
                 }
             }

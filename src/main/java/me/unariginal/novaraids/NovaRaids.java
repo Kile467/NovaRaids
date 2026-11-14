@@ -7,6 +7,7 @@ import me.unariginal.novaraids.managers.BossBarHandler;
 import me.unariginal.novaraids.managers.EventManager;
 import me.unariginal.novaraids.managers.Raid;
 import me.unariginal.novaraids.managers.TickManager;
+import me.unariginal.novaraids.utils.EntityDiscardScheduler;
 import me.unariginal.novaraids.utils.WebhookHandler;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -74,6 +75,7 @@ public class NovaRaids implements ModInitializer {
                     TickManager.fixBossPositions();
                     TickManager.handleDefeatedBosses();
                     TickManager.executeTasks();
+                    EntityDiscardScheduler.tick();
                     TickManager.fixPlayerPositions();
                     TickManager.fixPlayerPokemon();
                     TickManager.scheduledRaids();
